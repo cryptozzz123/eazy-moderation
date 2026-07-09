@@ -229,7 +229,7 @@ const server = http.createServer((req, res) => {
     res.end('Bot is awake!\n');
 });
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`Web monitor listening on port ${PORT}`);
 });
 
