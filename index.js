@@ -48,7 +48,7 @@ client.on('messageCreate', async (message) => {
             .setTitle('🛡️ Eazy Moderation | Commands Menu')
             .setDescription('Here is a complete list of administrative commands available for this bot. Ensure roles are properly configured.')
             .addFields(
-                { name: '⚙️ Utilities', value: '`!ping` - Check bot status & latency.\n`!help` - Display this modern interface.' },
+                { name: '⚙️ Utilities', value: '`!ping` - Check bot status & latency.\n`!help` - Display this modern interface.\n`!check [executor]` - Check real-time exploit and executor engine statuses.' },
                 { name: '🔨 Punishments', value: '`!kick @user [reason]` - Kick a user from the server.\n`!ban @user [reason]` - Permanently ban a member.\n`!unban [UserID]` - Revoke a ban using a unique ID.' },
                 { name: '🤫 Chat Restraints', value: '`!mute @user [reason]` - Timeout a user for 24 hours.\n`!unmute @user` - Instantly remove a user\'s timeout.' },
                 { name: '🧹 Clean & Warn', value: '`!clear [1-100]` - Wipe a specific number of recent messages.\n`!warn @user [reason]` - Fire an official warning embed to chat.' }
@@ -219,6 +219,64 @@ client.on('messageCreate', async (message) => {
             )
             .setTimestamp();
         return message.channel.send({ content: `${target}`, embeds: [warnEmbed] });
+    }
+
+    // =======================================================
+    // ⚙️ ADDED EXTRA SYSTEM FEATURES: !check
+    // =======================================================
+    if (command === 'check') {
+        const query = args.join(" ");
+        if (!query) return sendError(message, "Please specify an executor name to lookup. Example: `!check real`");
+
+        const processingMessage = await message.reply("Checking..");
+
+        try {
+            // Native dynamic status verification fetch request
+            const response = await fetch('https://weao.xyz/api/status/exploits');
+            if (!response.ok) throw new Error("API returned unexpected transmission codes.");
+            
+            const executorsList = await response.json();
+            
+            // Perform an isolated case-insensitive array structural search match
+            const matchedExecutor = executorsList.find(e => e.title && e.title.toLowerCase() === query.toLowerCase());
+
+            if (!matchedExecutor) {
+                const notFoundEmbed = new EmbedBuilder()
+                    .setColor(0xFF3333)
+                    .setDescription(`❌ **Executor Not Found:** Could not locate database traces matching \`${query}\`.`);
+                return processingMessage.edit({ content: null, embeds: [notFoundEmbed] });
+            }
+
+            // Standard status parsing mapping properties directly matching design requirements
+            const isWorking = matchedExecutor.updateStatus === true;
+            const statusIndicator = isWorking ? "🟢 UP / Working" : "🔴 DOWN / Outdated";
+            const embedColor = isWorking ? 0x2ECC71 : 0xE74C3C; // Match green/red lines perfectly
+
+            const isDetected = matchedExecutor.detected === true ? "Yes (Detected in banwaves)" : "No";
+
+            const infoEmbed = new EmbedBuilder()
+                .setColor(embedColor)
+                .setDescription(
+                    `**Executor: ${matchedExecutor.title}**\n\n` +
+                    `**Status**\n${statusIndicator}\n\n` +
+                    `**Detected?**\n${isDetected}\n\n` +
+                    `**Version**\n${matchedExecutor.version || "N/A"}\n\n` +
+                    `**Platform**\n${matchedExecutor.free === true ? "Free" : "Paid"}\n\n` +
+                    `**Last Update**\n${matchedExecutor.updatedDate || "Unknown"}\n\n` +
+                    `**Supported Roblox Build**\n\`${matchedExecutor.rbxversion || "N/A"}\`\n\n` +
+                    `**Website**\n${matchedExecutor.websitelink ? matchedExecutor.websitelink : "None Provided"}\n\n` +
+                    `**Discord**\n${matchedExecutor.discordlink ? matchedExecutor.discordlink : "None Provided"}`
+                );
+
+            return processingMessage.edit({ content: null, embeds: [infoEmbed] });
+
+        } catch (error) {
+            console.error(error);
+            const apiErrorEmbed = new EmbedBuilder()
+                .setColor(0xFF3333)
+                .setDescription("❌ **API Fault:** Failed to communicate or decode status details correctly right now.");
+            return processingMessage.edit({ content: null, embeds: [apiErrorEmbed] });
+        }
     }
 });
 
