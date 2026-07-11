@@ -1,14 +1,20 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionFlagsBits, EmbedBuilder, Collection } = require('discord.js');
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildVoiceStates // Required for voice chat mutations
     ]
 });
+
+// Runtime data caches for auditing logs (resets when the bot restarts)
+const globalBotLogs = [];
+const runningChatLogs = new Map(); // Maps userId -> array of recent messages
+const cooldowns = new Collection();
 
 client.once('ready', () => {
     console.log(`🚀 Success! Logged in as ${client.user.tag}`);
@@ -16,6 +22,20 @@ client.once('ready', () => {
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
+
+    // --- CHAT LOGGING BACKGROUND LISTENER ---
+    if (!runningChatLogs.has(message.author.id)) {
+        runningChatLogs.set(message.author.id, []);
+    }
+    const userLog = runningChatLogs.get(message.author.id);
+    userLog.push({
+        content: message.content,
+        channel: message.channel.name,
+        timestamp: new Date().toLocaleTimeString()
+    });
+    // Cap at last 100 entries per user to conserve active server memory space
+    if (userLog.length > 100) userLog.shift();
+
 
     const prefix = '!';
     if (!message.content.startsWith(prefix)) return;
@@ -30,6 +50,39 @@ client.on('messageCreate', async (message) => {
             .setDescription(`❌ ${text}`);
         return msg.reply({ embeds: [errorEmbed] });
     };
+
+    // --- ENFORCED GLOBAL COMMAND COOLDOWN (2 SECONDS) ---
+    const now = Date.now();
+    const cooldownAmount = 2 * 1000;
+
+    if (!cooldowns.has(command)) {
+        cooldowns.set(command, new Collection());
+    }
+
+    const timestamps = cooldowns.get(command);
+    if (timestamps.has(message.author.id)) {
+        const expirationTime = timestamps.get(message.author.id) + cooldownAmount;
+
+        if (now < expirationTime) {
+            const timeLeft = ((expirationTime - now) / 1000).toFixed(1);
+            return message.reply(`⚠️ Please slow down! Wait **${timeLeft}s** before using the \`${command}\` command again.`)
+                .then(msg => setTimeout(() => msg.delete().catch(() => {}), 3000));
+        }
+    }
+
+    timestamps.set(message.author.id, now);
+    setTimeout(() => timestamps.delete(message.author.id), cooldownAmount);
+
+
+    // --- BOT ACTIONS BACKGROUND LOGGER ---
+    globalBotLogs.push({
+        user: message.author.tag,
+        userId: message.author.id,
+        command: `!${command} ${args.join(" ")}`.trim(),
+        timestamp: new Date().toLocaleTimeString()
+    });
+    if (globalBotLogs.length > 150) globalBotLogs.shift(); // Bound memory leakage limits
+
 
     // Utility Command: Ping
     if (command === 'ping') {
@@ -48,10 +101,10 @@ client.on('messageCreate', async (message) => {
             .setTitle('🛡️ Eazy Moderation | Commands Menu')
             .setDescription('Here is a complete list of administrative commands available for this bot. Ensure roles are properly configured.')
             .addFields(
-                { name: '⚙️ Utilities', value: '`!ping` - Check bot status & latency.\n`!help` - Display this modern interface.\n`!check [executor]` - Check real-time exploit and executor engine statuses.' },
-                { name: '🔨 Punishments', value: '`!kick @user [reason]` - Kick a user from the server.\n`!ban @user [reason]` - Permanently ban a member.\n`!unban [UserID]` - Revoke a ban using a unique ID.' },
-                { name: '🤫 Chat Restraints', value: '`!mute @user [reason]` - Timeout a user for 24 hours.\n`!unmute @user` - Instantly remove a user\'s timeout.' },
-                { name: '🧹 Clean & Warn', value: '`!clear [1-100]` - Wipe a specific number of recent messages.\n`!warn @user [reason]` - Fire an official warning embed to chat.' }
+                { name: '⚙️ Utilities', value: '`!ping` - Check bot status & latency.\n`!help` - Display this modern interface.\n`!check [executor]` - Check real-time exploit statuses.\n`!botlogs` - Display recent commands executed on this system.' },
+                { name: '🔨 Punishments', value: '`!kick @user [reason]` - Kick a member.\n`!ban @user [reason]` - Permanently ban a member.\n`!unban [UserID]` - Revoke a ban.\n`!warn @user [reason]` - Record official warning logs.' },
+                { name: '🤫 Restraints & Voice', value: '`!mute @user [reason]` - Timeout a user for 24 hours.\n`!unmute @user` - Lift structural limitations.\n`!mutevc @user` - Toggle audio server voice mute.\n`!deafen @user` - Toggle system voice deafen.' },
+                { name: '🧹 Management', value: '`!clear [1-100]` - Wipe recent message flows.\n`!chatlogs @user` - Review targeted text streams.' }
             )
             .setFooter({ text: `${client.user.username} Modern System`, iconURL: client.user.displayAvatarURL() })
             .setTimestamp();
@@ -221,9 +274,7 @@ client.on('messageCreate', async (message) => {
         return message.channel.send({ content: `${target}`, embeds: [warnEmbed] });
     }
 
-    // =======================================================
-    // ⚙️ ADDED EXTRA SYSTEM FEATURES: !check
-    // =======================================================
+    // 8. CHECK EXECUTORS STATUS LINK
     if (command === 'check') {
         const query = args.join(" ");
         if (!query) return sendError(message, "Please specify an executor name to lookup. Example: `!check real`");
@@ -231,13 +282,10 @@ client.on('messageCreate', async (message) => {
         const processingMessage = await message.reply("Checking..");
 
         try {
-            // Native dynamic status verification fetch request
             const response = await fetch('https://weao.xyz/api/status/exploits');
-            if (!response.ok) throw new Error("API returned unexpected transmission codes.");
+            if (!response.ok) throw new Error("API status fault.");
             
             const executorsList = await response.json();
-            
-            // Perform an isolated case-insensitive array structural search match
             const matchedExecutor = executorsList.find(e => e.title && e.title.toLowerCase() === query.toLowerCase());
 
             if (!matchedExecutor) {
@@ -247,10 +295,9 @@ client.on('messageCreate', async (message) => {
                 return processingMessage.edit({ content: null, embeds: [notFoundEmbed] });
             }
 
-            // Standard status parsing mapping properties directly matching design requirements
             const isWorking = matchedExecutor.updateStatus === true;
             const statusIndicator = isWorking ? "🟢 UP / Working" : "🔴 DOWN / Outdated";
-            const embedColor = isWorking ? 0x2ECC71 : 0xE74C3C; // Match green/red lines perfectly
+            const embedColor = isWorking ? 0x2ECC71 : 0xE74C3C;
 
             const isDetected = matchedExecutor.detected === true ? "Yes (Detected in banwaves)" : "No";
 
@@ -276,6 +323,107 @@ client.on('messageCreate', async (message) => {
                 .setColor(0xFF3333)
                 .setDescription("❌ **API Fault:** Failed to communicate or decode status details correctly right now.");
             return processingMessage.edit({ content: null, embeds: [apiErrorEmbed] });
+        }
+    }
+
+    // =======================================================
+    // 🛡️ NEWLY REQUESTED SYSTEM COMMAND SECTIONS
+    // =======================================================
+
+    // 1. !BOTLOGS
+    if (command === 'botlogs') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+            return sendError(message, "You need `Manage Server` permissions to view bot operation metrics.");
+        }
+
+        if (globalBotLogs.length === 0) {
+            return message.reply("📋 **System Log Profile:** No commands have been handled since the engine last started.");
+        }
+
+        // Gather latest 10 action records to display cleanly inside formatting parameters
+        const formattedLogs = globalBotLogs.slice(-10).map(l => `\`[${l.timestamp}]\` **${l.user}**: \`${l.command}\``).join('\n');
+
+        const logsEmbed = new EmbedBuilder()
+            .setColor(0x34495E)
+            .setTitle('📋 Eazy Moderation | Internal System Audit Logs')
+            .setDescription(formattedLogs)
+            .setTimestamp();
+
+        return message.reply({ embeds: [logsEmbed] });
+    }
+
+    // 2. !CHATLOGS
+    if (command === 'chatlogs') {
+        if (!message.member.permissions.has(PermissionFlagsBits.MessageContent)) {
+            return sendError(message, "You don't have the explicit permission flags required to generate transcripts.");
+        }
+
+        const targetUser = message.mentions.users.first();
+        if (!targetUser) return sendError(message, "Please tag a user to view context cache history. Usage: `!chatlogs @user`");
+
+        const history = runningChatLogs.get(targetUser.id) || [];
+        if (history.length === 0) {
+            return message.reply(`🔍 No tracked text streams indexed in memory for user **${targetUser.tag}** recently.`);
+        }
+
+        const transcript = history.slice(-15).map(m => `\`[${m.timestamp}] #${m.channel}\` ${m.content}`).join('\n');
+
+        const chatlogsEmbed = new EmbedBuilder()
+            .setColor(0x9B59B6)
+            .setTitle(`💬 Transcript Log: ${targetUser.username}`)
+            .setDescription(transcript.length > 2000 ? transcript.slice(0, 1990) + "..." : transcript)
+            .setFooter({ text: "Displaying up to 15 last logged messages" });
+
+        return message.reply({ embeds: [chatlogsEmbed] });
+    }
+
+    // 3. !MUTVC
+    if (command === 'mutevc') {
+        if (!message.member.permissions.has(PermissionFlagsBits.MuteMembers)) {
+            return sendError(message, "You don't have the permission flag `Mute Members` to perform voice operations.");
+        }
+
+        const target = message.mentions.members.first();
+        if (!target) return sendError(message, "Please specify a target profile tag to adjust voice settings.");
+
+        const voiceState = target.voice.channel;
+        if (!voiceState) return sendError(message, "That user is not currently sitting in any active Voice Channels on this server.");
+
+        try {
+            const currentMuteStatus = target.voice.serverMute;
+            await target.voice.setMute(!currentMuteStatus); // Dynamic toggle logic
+            
+            const vcMuteEmbed = new EmbedBuilder()
+                .setColor(0x34495E)
+                .setDescription(`🎤 **Voice State Modified:** Successfully set server voice mute state to **${!currentMuteStatus}** for **${target.user.tag}**.`);
+            return message.reply({ embeds: [vcMuteEmbed] });
+        } catch (e) {
+            return sendError(message, "Could not manipulate connection layout flags on target user profiles.");
+        }
+    }
+
+    // 4. !DEAFEN
+    if (command === 'deafen') {
+        if (!message.member.permissions.has(PermissionFlagsBits.DeafenMembers)) {
+            return sendError(message, "You don't have the permission flag `Deafen Members` to perform voice operations.");
+        }
+
+        const target = message.mentions.members.first();
+        if (!target) return sendError(message, "Please specify a target profile tag to adjust deafen settings.");
+
+        const voiceState = target.voice.channel;
+        if (!voiceState) return sendError(message, "That user is not currently sitting in any active Voice Channels on this server.");
+
+        try {
+            const currentDeafenStatus = target.voice.serverDeafen;
+            await target.voice.setDeafen(!currentDeafenStatus); // Dynamic toggle logic
+
+            const vcDeafenEmbed = new EmbedBuilder()
+                .setColor(0x34495E)
+                .setDescription(`🎧 **Voice State Modified:** Successfully set server voice deafen state to **${!currentDeafenStatus}** for **${target.user.tag}**.`);
+            return message.reply({ embeds: [vcDeafenEmbed] });
+        } catch (e) {
+            return sendError(message, "Could not manipulate connection layout flags on target user profiles.");
         }
     }
 });
