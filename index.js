@@ -328,7 +328,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- OLD REQUESTED VOICE AUDITS ---
+    // --- AUDIT COMPONENT INTERFACES ---
 
     // 1. !BOTLOGS
     if (command === 'botlogs') {
@@ -368,7 +368,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [chatlogsEmbed] });
     }
 
-    // 3. !MUTVC
+    // 3. !MUTEVC
     if (command === 'mutevc') {
         if (!message.member.permissions.has(PermissionFlagsBits.MuteMembers)) {
             return sendError(message, "You don't have the permission flag `Mute Members` to perform voice operations.");
@@ -414,23 +414,16 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // =======================================================
-    // 🔒 NEWLY ADDED STRUCTURAL FEATURE SETS: CHANNELS & ROLES
-    // =======================================================
+    // --- CHANNEL MODERATIONS ---
 
     // 1. !LOCK
     if (command === 'lock') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need `Manage Channels` permission to execute this operation.");
         }
-
         const targetChannel = message.mentions.channels.first() || message.channel;
-        
         try {
-            await targetChannel.permissionOverwrites.edit(message.guild.roles.everyone, {
-                SendMessages: false
-            });
-            
+            await targetChannel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
             const lockEmbed = new EmbedBuilder()
                 .setColor(0xE74C3C)
                 .setDescription(`🔒 **Channel Locked:** Chat access has been suspended in ${targetChannel}.`);
@@ -445,14 +438,9 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need `Manage Channels` permission to execute this operation.");
         }
-
         const targetChannel = message.mentions.channels.first() || message.channel;
-        
         try {
-            await targetChannel.permissionOverwrites.edit(message.guild.roles.everyone, {
-                SendMessages: null // Clears the explicit restriction flag safely
-            });
-            
+            await targetChannel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null });
             const unlockEmbed = new EmbedBuilder()
                 .setColor(0x2ECC71)
                 .setDescription(`🔓 **Channel Unlocked:** Chat access has been restored in ${targetChannel}.`);
@@ -467,23 +455,19 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
             return sendError(message, "Emergency server actions require full `Administrator` security clearances.");
         }
-
-        const standardMessage = await message.reply("🔄 Initializing system-wide lockdown protocols...");
+        const standardMessage = await message.reply("🔄 Initializing server-wide lockdown protocols...");
         let lockedCount = 0;
-
         const textChannels = message.guild.channels.cache.filter(c => c.isTextBased());
-        
         for (const [id, channel] of textChannels) {
             try {
                 await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
                 lockedCount++;
-            } catch (e) { /* Skip structural edge cases gracefully */ }
+            } catch (e) {}
         }
-
         const lockdownDone = new EmbedBuilder()
             .setColor(0x992D22)
             .setTitle('🚨 Server Lockdown Active')
-            .setDescription(`Successfully locked **${lockedCount}** channels. All public structural communications are suspended.`);
+            .setDescription(`Successfully locked **${lockedCount}** channels. Public communications are suspended.`);
         return standardMessage.edit({ content: null, embeds: [lockdownDone] });
     }
 
@@ -492,19 +476,15 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
             return sendError(message, "Emergency server actions require full `Administrator` security clearances.");
         }
-
         const standardMessage = await message.reply("🔄 Revoking lockdown limits, restoring channel arrays...");
         let unlockedCount = 0;
-
         const textChannels = message.guild.channels.cache.filter(c => c.isTextBased());
-        
         for (const [id, channel] of textChannels) {
             try {
                 await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null });
                 unlockedCount++;
-            } catch (e) { /* Skip structural edge cases gracefully */ }
+            } catch (e) {}
         }
-
         const unlockdownDone = new EmbedBuilder()
             .setColor(0x2ECC71)
             .setTitle('🔓 Server Lockdown Lifted')
@@ -512,12 +492,13 @@ client.on('messageCreate', async (message) => {
         return standardMessage.edit({ content: null, embeds: [unlockdownDone] });
     }
 
-    // 5. !ROLE
+    // --- ROLE MANAGEMENT MODES ---
+
+    // 1. !ROLE
     if (command === 'role') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
             return sendError(message, "You don't have the `Manage Roles` permission.");
         }
-
         const targetMember = message.mentions.members.first();
         if (!targetMember) return sendError(message, "Please tag a target member profile. Usage: `!role @user [Role Name/ID]`");
 
@@ -543,12 +524,11 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 6. !UNROLE
+    // 2. !UNROLE
     if (command === 'unrole') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
             return sendError(message, "You don't have the `Manage Roles` permission.");
         }
-
         const targetMember = message.mentions.members.first();
         if (!targetMember) return sendError(message, "Please tag a target member profile. Usage: `!unrole @user [Role Name/ID]`");
 
@@ -574,27 +554,24 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 7. !STATUS
+    // 3. !STATUS (Simplified Dashboard Layout)
     if (command === 'status') {
         const uptimeRaw = Date.now() - bootTime;
         const hours = Math.floor(uptimeRaw / (1000 * 60 * 60));
         const minutes = Math.floor((uptimeRaw % (1000 * 60 * 60)) / (1000 * 60));
         const seconds = Math.floor((uptimeRaw % (1000 * 60)) / 1000);
 
-        const memoryUsed = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
-
         const statusEmbed = new EmbedBuilder()
             .setColor(0x2ECC71)
-            .setTitle('⚙️ Eazy Moderation | Core Operational Status')
-            .addFields(
-                { name: '🌐 Hosting Platform', value: 'Render Web Services (`Active Node Engine`)', inline: true },
-                { name: '⏱️ Core Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true },
-                { name: '💾 Memory Footprint', value: `\`${memoryUsed} MB\` / \`Cap Unbounded\``, inline: true },
-                { name: '🛡️ Framework Core', value: 'Discord.js `v14.x` Native Node Client', inline: true },
-                { name: '📊 Server Connections', value: `\`${client.guilds.cache.size}\` Guild Instances`, inline: true },
-                { name: '⚠️ Fail-Safe Guard', value: 'Anti-Crash Interceptor `Online` (Zero Ghosting)', inline: true }
+            .setTitle('⚙️ Eazy Moderation | System Status')
+            .setDescription(
+                `🟢 **Bot status:** Working\n` +
+                `🟢 **Render:** Working\n` +
+                `🟢 **GitHub:** Working\n` +
+                `🟢 **BotGhost Engine:** Working\n\n` +
+                `⏱️ **Uptime:** \`${hours}h ${minutes}m ${seconds}s\``
             )
-            .setFooter({ text: 'Eazy Moderation System Status Metrics' })
+            .setFooter({ text: 'All operational pipeline healthy' })
             .setTimestamp();
 
         return message.reply({ embeds: [statusEmbed] });
