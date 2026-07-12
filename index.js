@@ -568,7 +568,7 @@ client.on('messageCreate', async (message) => {
                 `🟢 **Bot status:** Working\n` +
                 `🟢 **Render:** Working\n` +
                 `🟢 **GitHub:** Working\n` +
-                `🟢 **BotGhost Engine:** Working\n\n` +
+                `🟢 **crashy:** Working\n\n` +
                 `⏱️ **Uptime:** \`${hours}h ${minutes}m ${seconds}s\``
             )
             .setFooter({ text: 'All operational pipeline healthy' })
