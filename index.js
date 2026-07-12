@@ -15,6 +15,7 @@ const client = new Client({
 const globalBotLogs = [];
 const runningChatLogs = new Map(); // Maps userId -> array of recent messages
 const cooldowns = new Collection();
+const bootTime = Date.now(); // Track initial system initialization timestamp
 
 client.once('ready', () => {
     console.log(`🚀 Success! Logged in as ${client.user.tag}`);
@@ -101,10 +102,11 @@ client.on('messageCreate', async (message) => {
             .setTitle('🛡️ Eazy Moderation | Commands Menu')
             .setDescription('Here is a complete list of administrative commands available for this bot. Ensure roles are properly configured.')
             .addFields(
-                { name: '⚙️ Utilities', value: '`!ping` - Check bot status & latency.\n`!help` - Display this modern interface.\n`!check [executor]` - Check real-time exploit statuses.\n`!botlogs` - Display recent commands executed on this system.' },
+                { name: '⚙️ Utilities', value: '`!ping` - Check bot status & latency.\n`!help` - Display this modern interface.\n`!check [executor]` - Check real-time exploit statuses.\n`!botlogs` - Display recent commands executed on this system.\n`!status` - View bot framework performance, hosting, and uptime.' },
                 { name: '🔨 Punishments', value: '`!kick @user [reason]` - Kick a member.\n`!ban @user [reason]` - Permanently ban a member.\n`!unban [UserID]` - Revoke a ban.\n`!warn @user [reason]` - Record official warning logs.' },
                 { name: '🤫 Restraints & Voice', value: '`!mute @user [reason]` - Timeout a user for 24 hours.\n`!unmute @user` - Lift structural limitations.\n`!mutevc @user` - Toggle audio server voice mute.\n`!deafen @user` - Toggle system voice deafen.' },
-                { name: '🧹 Management', value: '`!clear [1-100]` - Wipe recent message flows.\n`!chatlogs @user` - Review targeted text streams.' }
+                { name: '🧹 Management & Lock', value: '`!clear [1-100]` - Wipe recent message flows.\n`!chatlogs @user` - Review targeted text streams.\n`!lock [#chan]` - Lock a text channel.\n`!unlock [#chan]` - Re-open text channel permission loops.\n`!lockdown` - Emergency lock ALL server text channels.\n`!unlockdown` - Restore text channel paths globally.' },
+                { name: '🏷️ Role Controls', value: '`!role [@user] [Role]` - Assign a specific role to a server target member.\n`!unrole [@user] [Role]` - Remove a specific role value assignment.' }
             )
             .setFooter({ text: `${client.user.username} Modern System`, iconURL: client.user.displayAvatarURL() })
             .setTimestamp();
@@ -326,29 +328,22 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // =======================================================
-    // 🛡️ NEWLY REQUESTED SYSTEM COMMAND SECTIONS
-    // =======================================================
+    // --- OLD REQUESTED VOICE AUDITS ---
 
     // 1. !BOTLOGS
     if (command === 'botlogs') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
             return sendError(message, "You need `Manage Server` permissions to view bot operation metrics.");
         }
-
         if (globalBotLogs.length === 0) {
             return message.reply("📋 **System Log Profile:** No commands have been handled since the engine last started.");
         }
-
-        // Gather latest 10 action records to display cleanly inside formatting parameters
         const formattedLogs = globalBotLogs.slice(-10).map(l => `\`[${l.timestamp}]\` **${l.user}**: \`${l.command}\``).join('\n');
-
         const logsEmbed = new EmbedBuilder()
             .setColor(0x34495E)
             .setTitle('📋 Eazy Moderation | Internal System Audit Logs')
             .setDescription(formattedLogs)
             .setTimestamp();
-
         return message.reply({ embeds: [logsEmbed] });
     }
 
@@ -357,7 +352,6 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.MessageContent)) {
             return sendError(message, "You don't have the explicit permission flags required to generate transcripts.");
         }
-
         const targetUser = message.mentions.users.first();
         if (!targetUser) return sendError(message, "Please tag a user to view context cache history. Usage: `!chatlogs @user`");
 
@@ -365,15 +359,12 @@ client.on('messageCreate', async (message) => {
         if (history.length === 0) {
             return message.reply(`🔍 No tracked text streams indexed in memory for user **${targetUser.tag}** recently.`);
         }
-
         const transcript = history.slice(-15).map(m => `\`[${m.timestamp}] #${m.channel}\` ${m.content}`).join('\n');
-
         const chatlogsEmbed = new EmbedBuilder()
             .setColor(0x9B59B6)
             .setTitle(`💬 Transcript Log: ${targetUser.username}`)
             .setDescription(transcript.length > 2000 ? transcript.slice(0, 1990) + "..." : transcript)
             .setFooter({ text: "Displaying up to 15 last logged messages" });
-
         return message.reply({ embeds: [chatlogsEmbed] });
     }
 
@@ -382,7 +373,6 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.MuteMembers)) {
             return sendError(message, "You don't have the permission flag `Mute Members` to perform voice operations.");
         }
-
         const target = message.mentions.members.first();
         if (!target) return sendError(message, "Please specify a target profile tag to adjust voice settings.");
 
@@ -391,8 +381,7 @@ client.on('messageCreate', async (message) => {
 
         try {
             const currentMuteStatus = target.voice.serverMute;
-            await target.voice.setMute(!currentMuteStatus); // Dynamic toggle logic
-            
+            await target.voice.setMute(!currentMuteStatus);
             const vcMuteEmbed = new EmbedBuilder()
                 .setColor(0x34495E)
                 .setDescription(`🎤 **Voice State Modified:** Successfully set server voice mute state to **${!currentMuteStatus}** for **${target.user.tag}**.`);
@@ -407,7 +396,6 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.DeafenMembers)) {
             return sendError(message, "You don't have the permission flag `Deafen Members` to perform voice operations.");
         }
-
         const target = message.mentions.members.first();
         if (!target) return sendError(message, "Please specify a target profile tag to adjust deafen settings.");
 
@@ -416,8 +404,7 @@ client.on('messageCreate', async (message) => {
 
         try {
             const currentDeafenStatus = target.voice.serverDeafen;
-            await target.voice.setDeafen(!currentDeafenStatus); // Dynamic toggle logic
-
+            await target.voice.setDeafen(!currentDeafenStatus);
             const vcDeafenEmbed = new EmbedBuilder()
                 .setColor(0x34495E)
                 .setDescription(`🎧 **Voice State Modified:** Successfully set server voice deafen state to **${!currentDeafenStatus}** for **${target.user.tag}**.`);
@@ -425,6 +412,192 @@ client.on('messageCreate', async (message) => {
         } catch (e) {
             return sendError(message, "Could not manipulate connection layout flags on target user profiles.");
         }
+    }
+
+    // =======================================================
+    // 🔒 NEWLY ADDED STRUCTURAL FEATURE SETS: CHANNELS & ROLES
+    // =======================================================
+
+    // 1. !LOCK
+    if (command === 'lock') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return sendError(message, "You need `Manage Channels` permission to execute this operation.");
+        }
+
+        const targetChannel = message.mentions.channels.first() || message.channel;
+        
+        try {
+            await targetChannel.permissionOverwrites.edit(message.guild.roles.everyone, {
+                SendMessages: false
+            });
+            
+            const lockEmbed = new EmbedBuilder()
+                .setColor(0xE74C3C)
+                .setDescription(`🔒 **Channel Locked:** Chat access has been suspended in ${targetChannel}.`);
+            return message.reply({ embeds: [lockEmbed] });
+        } catch (err) {
+            return sendError(message, "Unable to restructure channel permission maps. Check bot hierarchy.");
+        }
+    }
+
+    // 2. !UNLOCK
+    if (command === 'unlock') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return sendError(message, "You need `Manage Channels` permission to execute this operation.");
+        }
+
+        const targetChannel = message.mentions.channels.first() || message.channel;
+        
+        try {
+            await targetChannel.permissionOverwrites.edit(message.guild.roles.everyone, {
+                SendMessages: null // Clears the explicit restriction flag safely
+            });
+            
+            const unlockEmbed = new EmbedBuilder()
+                .setColor(0x2ECC71)
+                .setDescription(`🔓 **Channel Unlocked:** Chat access has been restored in ${targetChannel}.`);
+            return message.reply({ embeds: [unlockEmbed] });
+        } catch (err) {
+            return sendError(message, "Unable to restructure channel permission maps. Check bot hierarchy.");
+        }
+    }
+
+    // 3. !LOCKDOWN
+    if (command === 'lockdown') {
+        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return sendError(message, "Emergency server actions require full `Administrator` security clearances.");
+        }
+
+        const standardMessage = await message.reply("🔄 Initializing system-wide lockdown protocols...");
+        let lockedCount = 0;
+
+        const textChannels = message.guild.channels.cache.filter(c => c.isTextBased());
+        
+        for (const [id, channel] of textChannels) {
+            try {
+                await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
+                lockedCount++;
+            } catch (e) { /* Skip structural edge cases gracefully */ }
+        }
+
+        const lockdownDone = new EmbedBuilder()
+            .setColor(0x992D22)
+            .setTitle('🚨 Server Lockdown Active')
+            .setDescription(`Successfully locked **${lockedCount}** channels. All public structural communications are suspended.`);
+        return standardMessage.edit({ content: null, embeds: [lockdownDone] });
+    }
+
+    // 4. !UNLOCKDOWN
+    if (command === 'unlockdown') {
+        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return sendError(message, "Emergency server actions require full `Administrator` security clearances.");
+        }
+
+        const standardMessage = await message.reply("🔄 Revoking lockdown limits, restoring channel arrays...");
+        let unlockedCount = 0;
+
+        const textChannels = message.guild.channels.cache.filter(c => c.isTextBased());
+        
+        for (const [id, channel] of textChannels) {
+            try {
+                await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null });
+                unlockedCount++;
+            } catch (e) { /* Skip structural edge cases gracefully */ }
+        }
+
+        const unlockdownDone = new EmbedBuilder()
+            .setColor(0x2ECC71)
+            .setTitle('🔓 Server Lockdown Lifted')
+            .setDescription(`Successfully restored public traffic permissions inside **${unlockedCount}** channels.`);
+        return standardMessage.edit({ content: null, embeds: [unlockdownDone] });
+    }
+
+    // 5. !ROLE
+    if (command === 'role') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
+            return sendError(message, "You don't have the `Manage Roles` permission.");
+        }
+
+        const targetMember = message.mentions.members.first();
+        if (!targetMember) return sendError(message, "Please tag a target member profile. Usage: `!role @user [Role Name/ID]`");
+
+        const roleQuery = args.slice(1).join(" ");
+        if (!roleQuery) return sendError(message, "Specify a target structural role tag or ID.");
+
+        const targetRole = message.guild.roles.cache.get(roleQuery) || 
+                           message.guild.roles.cache.find(r => r.name.toLowerCase() === roleQuery.toLowerCase());
+
+        if (!targetRole) return sendError(message, "Could not map that role indicator value inside server databases.");
+        if (targetRole.position >= message.guild.members.me.roles.highest.position) {
+            return sendError(message, "That role sits higher than my operational permission index structure.");
+        }
+
+        try {
+            await targetMember.roles.add(targetRole);
+            const roleEmbed = new EmbedBuilder()
+                .setColor(0x3498DB)
+                .setDescription(`✅ Successfully assigned role **${targetRole.name}** to **${targetMember.user.tag}**.`);
+            return message.reply({ embeds: [roleEmbed] });
+        } catch (err) {
+            return sendError(message, "Execution failure. Verify structural role balance setups.");
+        }
+    }
+
+    // 6. !UNROLE
+    if (command === 'unrole') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
+            return sendError(message, "You don't have the `Manage Roles` permission.");
+        }
+
+        const targetMember = message.mentions.members.first();
+        if (!targetMember) return sendError(message, "Please tag a target member profile. Usage: `!unrole @user [Role Name/ID]`");
+
+        const roleQuery = args.slice(1).join(" ");
+        if (!roleQuery) return sendError(message, "Specify a target structural role tag or ID.");
+
+        const targetRole = message.guild.roles.cache.get(roleQuery) || 
+                           message.guild.roles.cache.find(r => r.name.toLowerCase() === roleQuery.toLowerCase());
+
+        if (!targetRole) return sendError(message, "Could not map that role indicator value inside server databases.");
+        if (targetRole.position >= message.guild.members.me.roles.highest.position) {
+            return sendError(message, "That role sits higher than my operational permission index structure.");
+        }
+
+        try {
+            await targetMember.roles.remove(targetRole);
+            const unroleEmbed = new EmbedBuilder()
+                .setColor(0xE67E22)
+                .setDescription(`🗑️ Successfully removed role **${targetRole.name}** from **${targetMember.user.tag}**.`);
+            return message.reply({ embeds: [unroleEmbed] });
+        } catch (err) {
+            return sendError(message, "Execution failure. Verify structural role balance setups.");
+        }
+    }
+
+    // 7. !STATUS
+    if (command === 'status') {
+        const uptimeRaw = Date.now() - bootTime;
+        const hours = Math.floor(uptimeRaw / (1000 * 60 * 60));
+        const minutes = Math.floor((uptimeRaw % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((uptimeRaw % (1000 * 60)) / 1000);
+
+        const memoryUsed = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
+
+        const statusEmbed = new EmbedBuilder()
+            .setColor(0x2ECC71)
+            .setTitle('⚙️ Eazy Moderation | Core Operational Status')
+            .addFields(
+                { name: '🌐 Hosting Platform', value: 'Render Web Services (`Active Node Engine`)', inline: true },
+                { name: '⏱️ Core Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true },
+                { name: '💾 Memory Footprint', value: `\`${memoryUsed} MB\` / \`Cap Unbounded\``, inline: true },
+                { name: '🛡️ Framework Core', value: 'Discord.js `v14.x` Native Node Client', inline: true },
+                { name: '📊 Server Connections', value: `\`${client.guilds.cache.size}\` Guild Instances`, inline: true },
+                { name: '⚠️ Fail-Safe Guard', value: 'Anti-Crash Interceptor `Online` (Zero Ghosting)', inline: true }
+            )
+            .setFooter({ text: 'Eazy Moderation System Status Metrics' })
+            .setTimestamp();
+
+        return message.reply({ embeds: [statusEmbed] });
     }
 });
 
@@ -437,6 +610,16 @@ const server = http.createServer((req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Web monitor listening on port ${PORT}`);
+});
+
+// =======================================================
+// 🛡️ ANTI-CRASH PROTECTION ENGINE (Prevents BotGhost Crashes)
+// =======================================================
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('⚠️ [CRITICAL ANTI-CRASH] Unhandled rejection intercepted:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err, origin) => {
+    console.error('⚠️ [CRITICAL ANTI-CRASH] Uncaught exception intercepted:', err, 'origin:', origin);
 });
 
 client.login(process.env.DISCORD_TOKEN);
