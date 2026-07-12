@@ -7,7 +7,8 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildVoiceStates // Required for voice chat mutations
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildPresences // CRITICAL: Required to read online/offline status fields
     ]
 });
 
@@ -554,31 +555,68 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 3. !STATUS (Simplified Dashboard Layout)
+    // 3. !STATUS (Dynamic Live Verification Tracker)
     if (command === 'status') {
+        // Calculate dynamic real-time Uptime values
         const uptimeRaw = Date.now() - bootTime;
         const hours = Math.floor(uptimeRaw / (1000 * 60 * 60));
         const minutes = Math.floor((uptimeRaw % (1000 * 60 * 60)) / (1000 * 60));
         const seconds = Math.floor((uptimeRaw % (1000 * 60)) / 1000);
 
+        // 1. Bot status validation: dynamically checks Gateway connection socket latency
+        const isBotHealthy = client.ws.ping > 0 && client.ws.ping < 1000;
+        const botStatusEmoji = isBotHealthy ? '🟢' : '🔴';
+        const botStatusText = isBotHealthy ? 'Working' : 'Lagging / Down';
+
+        // 2. Render container pipeline hosting validation
+        const isRenderHostingActive = process.env.PORT !== undefined || process.env.RENDER === 'true';
+        const renderStatusEmoji = isRenderHostingActive ? '🟢' : '🔴';
+        const renderStatusText = isRenderHostingActive ? 'Working' : 'Local Host/Down';
+
+        // 3. GitHub live network connection test via official endpoint
+        let githubStatusEmoji = '🔴';
+        let githubStatusText = 'Down';
+        try {
+            const ghCheck = await fetch('https://api.github.com', { method: 'HEAD', timeout: 1500 });
+            if (ghCheck.ok) {
+                githubStatusEmoji = '🟢';
+                githubStatusText = 'Working';
+            }
+        } catch (err) {
+            githubStatusEmoji = '🔴';
+            githubStatusText = 'Connection Error';
+        }
+
+        // 4. Crashy Bot internal cache presence verification
+        const CRASHY_BOT_ID = '1512062436411183114'; 
+        const crashyMember = message.guild.members.cache.get(CRASHY_BOT_ID);
+        const isCrashyOnline = crashyMember && crashyMember.presence && crashyMember.presence.status !== 'offline';
+        
+        const crashyStatusEmoji = isCrashyOnline ? '🟢' : '🔴';
+        const crashyStatusText = isCrashyOnline ? 'Working' : 'Down';
+
+        // Choose color based on overall system stability status
+        const isSystemStable = isBotHealthy && isRenderHostingActive && isCrashyOnline;
+        const embedColor = isSystemStable ? 0x2ECC71 : 0xE74C3C;
+
         const statusEmbed = new EmbedBuilder()
-            .setColor(0x2ECC71)
+            .setColor(embedColor)
             .setTitle('⚙️ Eazy Moderation | System Status')
             .setDescription(
-                `🟢 **Bot status:** Working\n` +
-                `🟢 **Render:** Working\n` +
-                `🟢 **GitHub:** Working\n` +
-                `🟢 **crashy:** Working\n\n` +
+                `${botStatusEmoji} **Bot status:** ${botStatusText}\n` +
+                `${renderStatusEmoji} **Render:** ${renderStatusText}\n` +
+                `${githubStatusEmoji} **GitHub:** ${githubStatusText}\n` +
+                `${crashyStatusEmoji} **crashy:** ${crashyStatusText}\n\n` +
                 `⏱️ **Uptime:** \`${hours}h ${minutes}m ${seconds}s\``
             )
-            .setFooter({ text: 'All operational pipeline healthy' })
+            .setFooter({ text: 'Live system array validation checks active' })
             .setTimestamp();
 
         return message.reply({ embeds: [statusEmbed] });
     }
 });
 
-// Dummy Web Server for Render Up-time
+// Dummy Web Server for Render Up-time monitoring
 const http = require('http');
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -590,7 +628,7 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 // =======================================================
-// 🛡️ ANTI-CRASH PROTECTION ENGINE (Prevents BotGhost Crashes)
+// 🛡️ ANTI-CRASH PROTECTION ENGINE (Prevents Unhandled Drops)
 // =======================================================
 process.on('unhandledRejection', (reason, promise) => {
     console.error('⚠️ [CRITICAL ANTI-CRASH] Unhandled rejection intercepted:', promise, 'reason:', reason);
