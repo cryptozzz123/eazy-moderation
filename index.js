@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, PermissionFlagsBits, EmbedBuilder, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionFlagsBits, EmbedBuilder, Collection, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 const client = new Client({
     intents: [
@@ -11,6 +11,32 @@ const client = new Client({
         GatewayIntentBits.GuildPresences // CRITICAL: Required to read online/offline status fields
     ]
 });
+
+// =========================================================================
+// 🖼️ CUSTOM EXECUTOR IMAGE CONFIGURATION
+// All requested executors are fully loaded below!
+// Simply paste your Discord image link inside the quotes for any executor.
+// =========================================================================
+const EXECUTOR_IMAGES = {
+    "volt": "https://cdn.discordapp.com/attachments/1478359860570751159/1526169379459563601/sunc.png?ex=6a560b7e&is=6a54b9fe&hm=94313523b8e6e5d2d6bd9542845db7f4d1f4896d66163b554bc39f0dc53aff46&",
+    "potassium": "https://cdn.discordapp.com/attachments/1478359860570751159/1526176916531318814/sunc.png?ex=6a561283&is=6a54c103&hm=c467bc57700a616c8d5cc6d546a9a3d987f7c073e6e77495d727f57bfa6ce014&",
+    "xeno": "https://cdn.discordapp.com/attachments/1478359860570751159/1526176811711467590/sunc.png?ex=6a56126a&is=6a54c0ea&hm=782d4698fb80a3ecbb3e773287304785c48720265ffea0a473527fda63c3dcbd&",
+    "solara": "https://cdn.discordapp.com/attachments/1478359860570751159/1526138851704307712/sunc.png?ex=6a55ef10&is=6a549d90&hm=9d7d739a883e6f27fe36b887b812a3997c7ef0f3ec21f1a4b9819008d732b5de&",
+    "wave": "https://cdn.discordapp.com/attachments/1478359860570751159/1526186867026825366/sunc.png?ex=6a561bc8&is=6a54ca48&hm=6a2fad8ccc8fb443b78740d61b865810d0573c0f6ab179cd3b1530200dc1daf2&",
+    "real": "https://cdn.discordapp.com/attachments/1478359860570751159/1526177102817398886/sunc.png?ex=6a5612b0&is=6a54c130&hm=d33560ab3dd06cc000e7b35160c6956ff807c091f638f2bf1c26603c71474d6f&",
+    "velocity": "https://cdn.discordapp.com/attachments/1478359860570751159/1526181791759601765/sunc.png?ex=6a56170e&is=6a54c58e&hm=b29224df4cfeeb363d4bf7ee1527b33aae1c161e97904c0c13e6cf6fb3a4dddd&", 
+    "madium": "https://cdn.discordapp.com/attachments/1478359860570751159/1526177030838812672/sunc.png?ex=6a56129f&is=6a54c11f&hm=242e9135e53753c646e2c6b29f961d85ac816a56d03cc6c6da6e3454c2575b57&",
+    "synapse z": "https://cdn.discordapp.com/attachments/1478359860570751159/1526186942256123995/sunc.png?ex=6a561bda&is=6a54ca5a&hm=7440f9d83409a79c700f211b04b115d39f13a405ebbfe6f25cad513ee3c571b8&",
+    "cosmic": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187048392851609/sunc.png?ex=6a561bf3&is=6a54ca73&hm=4cb3b59db869fc938de94aa50dc71801daf397a0742fe010363ccc740dd6d4f6&",
+    "macsploit": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187094005911602/sunc.png?ex=6a561bfe&is=6a54ca7e&hm=d42db7cd6d9e70fd314b614c5a514c6a69afb984cd476665f6a353957d6eb465&",
+    "opiumware": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187176956661860/sunc.png?ex=6a561c12&is=6a54ca92&hm=eb4f2a07daa855119e61f3c17d8205d966c64236c21fa2e6749b791df248f302&",
+    "delta": "https://cdn.discordapp.com/attachments/1478359860570751159/1526036362766057472/sunc.png?ex=6a558f9d&is=6a543e1d&hm=4e38ffbaedfe2b194d3f4ce4ca2da3210af1657c8005bbbf233c021e5862a05b&",
+    "codex": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187244988141618/sunc.png?ex=6a561c22&is=6a54caa2&hm=c7c0e84f4542e0e48e9d9f85a7a2e87a1a250c34506fc86b4ebf6fa5459157a4&",
+    "vega x": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187398478696519/sunc.png?ex=6a561c46&is=6a54cac6&hm=8244fc048a27283d497680ade5185b52fc49c9fca83b73d3397058df989ef001&"
+};
+
+// Global Bot Version Constant
+const BOT_VERSION = '1.2.0';
 
 // Runtime data caches for auditing logs (resets when the bot restarts)
 const globalBotLogs = [];
@@ -35,9 +61,7 @@ client.on('messageCreate', async (message) => {
         channel: message.channel.name,
         timestamp: new Date().toLocaleTimeString()
     });
-    // Cap at last 100 entries per user to conserve active server memory space
     if (userLog.length > 100) userLog.shift();
-
 
     const prefix = '!';
     if (!message.content.startsWith(prefix)) return;
@@ -75,7 +99,6 @@ client.on('messageCreate', async (message) => {
     timestamps.set(message.author.id, now);
     setTimeout(() => timestamps.delete(message.author.id), cooldownAmount);
 
-
     // --- BOT ACTIONS BACKGROUND LOGGER ---
     globalBotLogs.push({
         user: message.author.tag,
@@ -83,8 +106,7 @@ client.on('messageCreate', async (message) => {
         command: `!${command} ${args.join(" ")}`.trim(),
         timestamp: new Date().toLocaleTimeString()
     });
-    if (globalBotLogs.length > 150) globalBotLogs.shift(); // Bound memory leakage limits
-
+    if (globalBotLogs.length > 150) globalBotLogs.shift();
 
     // Utility Command: Ping
     if (command === 'ping') {
@@ -96,6 +118,17 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [pingEmbed] });
     }
 
+    // New Command: Version Check
+    if (command === 'version') {
+        const versionEmbed = new EmbedBuilder()
+            .setColor(0x3498DB)
+            .setTitle('ℹ️ Eazy Moderation | Version Profile')
+            .setDescription(`Current operational software framework layer is on **v${BOT_VERSION}**`)
+            .setTimestamp()
+            .setFooter({ text: `${client.user.username} Engine` });
+        return message.reply({ embeds: [versionEmbed] });
+    }
+
     // Utility Command: Help menu
     if (command === 'help') {
         const helpEmbed = new EmbedBuilder()
@@ -103,7 +136,7 @@ client.on('messageCreate', async (message) => {
             .setTitle('🛡️ Eazy Moderation | Commands Menu')
             .setDescription('Here is a complete list of administrative commands available for this bot. Ensure roles are properly configured.')
             .addFields(
-                { name: '⚙️ Utilities', value: '`!ping` - Check bot status & latency.\n`!help` - Display this modern interface.\n`!check [executor]` - Check real-time exploit statuses.\n`!botlogs` - Display recent commands executed on this system.\n`!status` - View bot framework performance, hosting, and uptime.' },
+                { name: '⚙️ Utilities', value: '`!ping` - Check bot status & latency.\n`!version` - Display active engine software release built.\n`!help` - Display this modern interface.\n`!check [executor]` - Check real-time exploit statuses.\n`!botlogs` - Display recent commands executed on this system.\n`!status` - View bot framework performance, hosting, and uptime.' },
                 { name: '🔨 Punishments', value: '`!kick @user [reason]` - Kick a member.\n`!ban @user [reason]` - Permanently ban a member.\n`!unban [UserID]` - Revoke a ban.\n`!warn @user [reason]` - Record official warning logs.' },
                 { name: '🤫 Restraints & Voice', value: '`!mute @user [reason]` - Timeout a user for 24 hours.\n`!unmute @user` - Lift structural limitations.\n`!mutevc @user` - Toggle audio server voice mute.\n`!deafen @user` - Toggle system voice deafen.' },
                 { name: '🧹 Management & Lock', value: '`!clear [1-100]` - Wipe recent message flows.\n`!chatlogs @user` - Review targeted text streams.\n`!lock [#chan]` - Lock a text channel.\n`!unlock [#chan]` - Re-open text channel permission loops.\n`!lockdown` - Emergency lock ALL server text channels.\n`!unlockdown` - Restore text channel paths globally.' },
@@ -114,7 +147,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [helpEmbed] });
     }
 
-    // --- MODERATION COMMANDS ---
+    // --- MODERATION PUNISHMENTS ---
 
     // 1. KICK
     if (command === 'kick') {
@@ -277,10 +310,10 @@ client.on('messageCreate', async (message) => {
         return message.channel.send({ content: `${target}`, embeds: [warnEmbed] });
     }
 
-    // 8. CHECK EXECUTORS STATUS LINK
+    // 8. REDESIGNED CHECK EXECUTORS COMMAND (With dynamic buttons and Top Images)
     if (command === 'check') {
         const query = args.join(" ");
-        if (!query) return sendError(message, "Please specify an executor name to lookup. Example: `!check real`");
+        if (!query) return sendError(message, "Please specify an executor name to lookup. Example: `!check velocity`");
 
         const processingMessage = await message.reply("Checking..");
 
@@ -289,7 +322,8 @@ client.on('messageCreate', async (message) => {
             if (!response.ok) throw new Error("API status fault.");
             
             const executorsList = await response.json();
-            const matchedExecutor = executorsList.find(e => e.title && e.title.toLowerCase() === query.toLowerCase());
+            const queryLower = query.toLowerCase();
+            const matchedExecutor = executorsList.find(e => e.title && e.title.toLowerCase() === queryLower);
 
             if (!matchedExecutor) {
                 const notFoundEmbed = new EmbedBuilder()
@@ -299,26 +333,72 @@ client.on('messageCreate', async (message) => {
             }
 
             const isWorking = matchedExecutor.updateStatus === true;
-            const statusIndicator = isWorking ? "🟢 UP / Working" : "🔴 DOWN / Outdated";
+            const statusEmoji = isWorking ? "✅" : "❌";
             const embedColor = isWorking ? 0x2ECC71 : 0xE74C3C;
 
-            const isDetected = matchedExecutor.detected === true ? "Yes (Detected in banwaves)" : "No";
+            // Format Tier details (Free vs Paid)
+            const isFree = matchedExecutor.free === true;
+            const tierText = isFree ? "Free" : "Paid";
 
+            // Format anti-cheat status / detection details cleanly below
+            const warningText = matchedExecutor.detected === true 
+                ? "⚠️ Detected in banwaves, proceed with extreme caution." 
+                : "Bypasses client mod bans, may cause bans in banwaves.";
+
+            // Core Layout Redesign matching User Image Specification Interface
             const infoEmbed = new EmbedBuilder()
                 .setColor(embedColor)
+                .setTitle(matchedExecutor.title)
                 .setDescription(
-                    `**Executor: ${matchedExecutor.title}**\n\n` +
-                    `**Status**\n${statusIndicator}\n\n` +
-                    `**Detected?**\n${isDetected}\n\n` +
-                    `**Version**\n${matchedExecutor.version || "N/A"}\n\n` +
-                    `**Platform**\n${matchedExecutor.free === true ? "Free" : "Paid"}\n\n` +
-                    `**Last Update**\n${matchedExecutor.updatedDate || "Unknown"}\n\n` +
-                    `**Supported Roblox Build**\n\`${matchedExecutor.rbxversion || "N/A"}\`\n\n` +
-                    `**Website**\n${matchedExecutor.websitelink ? matchedExecutor.websitelink : "None Provided"}\n\n` +
-                    `**Discord**\n${matchedExecutor.discordlink ? matchedExecutor.discordlink : "None Provided"}`
-                );
+                    `Updated ${statusEmoji} - \`${matchedExecutor.version || "N/A"}\` - **${tierText}** - Key System\n` +
+                    `Last updated: ${matchedExecutor.updatedDate || "N/A"}\n\n` +
+                    `> ${warningText}`
+                )
+                .setFooter({ text: 'Powered by weao.xyz' })
+                .setTimestamp();
 
-            return processingMessage.edit({ content: null, embeds: [infoEmbed] });
+            // Handle custom top image injection if configured
+            if (EXECUTOR_IMAGES[queryLower] && EXECUTOR_IMAGES[queryLower] !== "") {
+                infoEmbed.setImage(EXECUTOR_IMAGES[queryLower]);
+            }
+
+            // --- Dynamic Buttons Component Setup ---
+            const actionRow = new ActionRowBuilder();
+
+            // 1. Website Button
+            if (matchedExecutor.websitelink) {
+                actionRow.addComponents(
+                    new ButtonBuilder()
+                        .setLabel('Website')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(matchedExecutor.websitelink)
+                );
+            }
+
+            // 2. Discord Button
+            if (matchedExecutor.discordlink) {
+                actionRow.addComponents(
+                    new ButtonBuilder()
+                        .setLabel('Discord')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(matchedExecutor.discordlink)
+                );
+            }
+
+            // 3. Purchase Button: Exclude for velocity, require for non-free executors
+            if (queryLower !== 'velocity' && !isFree) {
+                actionRow.addComponents(
+                    new ButtonBuilder()
+                        .setLabel('Purchase')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL('https://rcheatz.com/')
+                );
+            }
+
+            // Only attach action row components if links are provided
+            const componentsArray = actionRow.components.length > 0 ? [actionRow] : [];
+
+            return processingMessage.edit({ content: null, embeds: [infoEmbed], components: componentsArray });
 
         } catch (error) {
             console.error(error);
@@ -477,7 +557,7 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
             return sendError(message, "Emergency server actions require full `Administrator` security clearances.");
         }
-        const standardMessage = await message.reply("🔄 Revoking lockdown limits, restoring channel arrays...");
+        const standardMessage = await message.reply("🔄 Revoking lockdown limits, restoring channel arrays......");
         let unlockedCount = 0;
         const textChannels = message.guild.channels.cache.filter(c => c.isTextBased());
         for (const [id, channel] of textChannels) {
@@ -557,27 +637,24 @@ client.on('messageCreate', async (message) => {
 
     // 3. !STATUS (Dynamic Live Verification Tracker)
     if (command === 'status') {
-        // Calculate dynamic real-time Uptime values
         const uptimeRaw = Date.now() - bootTime;
         const hours = Math.floor(uptimeRaw / (1000 * 60 * 60));
         const minutes = Math.floor((uptimeRaw % (1000 * 60 * 60)) / (1000 * 60));
         const seconds = Math.floor((uptimeRaw % (1000 * 60)) / 1000);
 
-        // 1. Bot status validation: dynamically checks Gateway connection socket latency
-        const isBotHealthy = client.ws.ping > 0 && client.ws.ping < 1000;
+        const currentPing = client.ws.ping;
+        const isBotHealthy = (currentPing > 0 && currentPing < 1000) || (uptimeRaw < 60000 && currentPing >= -1);
         const botStatusEmoji = isBotHealthy ? '🟢' : '🔴';
         const botStatusText = isBotHealthy ? 'Working' : 'Lagging / Down';
 
-        // 2. Render container pipeline hosting validation
         const isRenderHostingActive = process.env.PORT !== undefined || process.env.RENDER === 'true';
         const renderStatusEmoji = isRenderHostingActive ? '🟢' : '🔴';
         const renderStatusText = isRenderHostingActive ? 'Working' : 'Local Host/Down';
 
-        // 3. GitHub live network connection test via official endpoint
         let githubStatusEmoji = '🔴';
         let githubStatusText = 'Down';
         try {
-            const ghCheck = await fetch('https://api.github.com', { method: 'HEAD', timeout: 1500 });
+            const ghCheck = await fetch('https://api.github.com', { method: 'HEAD', signal: AbortSignal.timeout(1500) });
             if (ghCheck.ok) {
                 githubStatusEmoji = '🟢';
                 githubStatusText = 'Working';
@@ -587,15 +664,18 @@ client.on('messageCreate', async (message) => {
             githubStatusText = 'Connection Error';
         }
 
-        // 4. Crashy Bot internal cache presence verification
         const CRASHY_BOT_ID = '1512062436411183114'; 
-        const crashyMember = message.guild.members.cache.get(CRASHY_BOT_ID);
-        const isCrashyOnline = crashyMember && crashyMember.presence && crashyMember.presence.status !== 'offline';
+        let crashyMember = message.guild.members.cache.get(CRASHY_BOT_ID);
+        if (!crashyMember) {
+            try {
+                crashyMember = await message.guild.members.fetch(CRASHY_BOT_ID);
+            } catch (e) {}
+        }
         
+        const isCrashyOnline = crashyMember && crashyMember.presence && crashyMember.presence.status !== 'offline';
         const crashyStatusEmoji = isCrashyOnline ? '🟢' : '🔴';
         const crashyStatusText = isCrashyOnline ? 'Working' : 'Down';
 
-        // Choose color based on overall system stability status
         const isSystemStable = isBotHealthy && isRenderHostingActive && isCrashyOnline;
         const embedColor = isSystemStable ? 0x2ECC71 : 0xE74C3C;
 
