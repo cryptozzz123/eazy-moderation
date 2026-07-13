@@ -66,7 +66,7 @@ const EXECUTOR_IMAGES = {
 };
 
 // Global Bot Version Constant
-const BOT_VERSION = '1.3.0';
+const BOT_VERSION = '1.3.1';
 
 // Runtime data caches for auditing logs (resets when the bot restarts)
 const globalBotLogs = [];
@@ -93,9 +93,8 @@ async function checkRobloxVersions() {
             const res = await fetch('https://weao.xyz/api/versions/current');
             if (res.ok) {
                 const data = await res.json();
-                if (Array.isArray(data)) {
-                    for (const item of data) {
-                        const platform = item.platform || 'Unknown';
+                if (data && typeof data === 'object' && !Array.isArray(data)) {
+                    for (const [platform, item] of Object.entries(data)) {
                         const currentVer = item.version || '';
                         if (!currentVer) continue;
 
@@ -119,9 +118,8 @@ async function checkRobloxVersions() {
             const res = await fetch('https://weao.xyz/api/versions/future');
             if (res.ok) {
                 const data = await res.json();
-                if (Array.isArray(data)) {
-                    for (const item of data) {
-                        const platform = item.platform || 'Unknown';
+                if (data && typeof data === 'object' && !Array.isArray(data)) {
+                    for (const [platform, item] of Object.entries(data)) {
                         const currentVer = item.version || '';
                         if (!currentVer) continue;
 
@@ -329,13 +327,13 @@ client.on('messageCreate', async (message) => {
             if (!res.ok) throw new Error("API responded with an error status.");
             const data = await res.json();
             
-            if (Array.isArray(data) && data.length > 0) {
-                for (const item of data) {
-                    await broadcastVersionUpdate('live', item.platform || 'Unknown', item.version || 'N/A');
+            if (data && typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length > 0) {
+                for (const [platform, item] of Object.entries(data)) {
+                    await broadcastVersionUpdate('live', platform, item.version || 'N/A');
                 }
                 return sendSuccess(processingMessage, "Live version tracking cards dispatched manually to all configured channels.");
             } else {
-                return sendError(processingMessage, "Live update version endpoints returned an empty data structure.");
+                return sendError(processingMessage, "Live update version endpoints returned an unexpected or empty data structure.");
             }
         } catch (err) {
             console.error(err);
@@ -357,13 +355,13 @@ client.on('messageCreate', async (message) => {
             if (!res.ok) throw new Error("API responded with an error status.");
             const data = await res.json();
             
-            if (Array.isArray(data) && data.length > 0) {
-                for (const item of data) {
-                    await broadcastVersionUpdate('beta', item.platform || 'Unknown', item.version || 'N/A');
+            if (data && typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length > 0) {
+                for (const [platform, item] of Object.entries(data)) {
+                    await broadcastVersionUpdate('beta', platform, item.version || 'N/A');
                 }
                 return sendSuccess(processingMessage, "Beta version tracking cards dispatched manually to all configured channels.");
             } else {
-                return sendError(processingMessage, "Beta update version endpoints returned an empty data structure.");
+                return sendError(processingMessage, "Beta update version endpoints returned an unexpected or empty data structure.");
             }
         } catch (err) {
             console.error(err);
