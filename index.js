@@ -861,6 +861,10 @@ client.on('messageCreate', async (message) => {
         }
     }
 
+    // =========================================================================
+    // ⚙️ CONSOLIDATED SINGLE-MESSAGE CONTEXT STATUS ENGINE
+    // Matches exact image layouts with formatted structural dates
+    // =========================================================================
     if (command === 'status') {
         const uptimeRaw = Date.now() - bootTime;
         const hours = Math.floor(uptimeRaw / (1000 * 60 * 60));
@@ -904,10 +908,15 @@ client.on('messageCreate', async (message) => {
         const isSystemStable = isBotHealthy && isRenderHostingActive && isCrashyOnline;
         const embedColor = isSystemStable ? 0x2ECC71 : 0xE74C3C;
 
+        // Date calculation for the direct localized string formatting line
+        const dateOptions = { year: 'numeric', month: 'long', day: 'numeric' };
+        const formattedDateString = new Date().toLocaleDateString('en-US', dateOptions);
+
         const statusEmbed = new EmbedBuilder()
             .setColor(embedColor)
             .setTitle('⚙️ Eazy Moderation | System Status')
             .setDescription(
+                `**Date:** ${formattedDateString}\n\n` +
                 `${botStatusEmoji} **Bot status:** ${botStatusText}\n` +
                 `${renderStatusEmoji} **Render:** ${renderStatusText}\n` +
                 `${githubStatusEmoji} **GitHub:** ${githubStatusText}\n` +
