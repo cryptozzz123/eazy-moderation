@@ -26,7 +26,7 @@ let versionConfig = {
 };
 
 // Global Bot Version Constant
-const BOT_VERSION = '1.5.2'; 
+const BOT_VERSION = '1.5.3'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -80,10 +80,11 @@ async function checkRobloxVersions() {
     try {
         const currentRes = await fetch('https://weao.xyz/api/versions/current');
         if (currentRes.ok) {
-            const rawData = await currentRes.json();
-            // Try explicit matching across either arrays or direct properties
-            const data = Array.isArray(rawData) ? rawData[0] : rawData;
-            const liveVer = data?.version || data?.windowsVersion || data?.winVersion || '';
+            const data = await currentRes.json();
+            const list = Array.isArray(data) ? data : [data];
+            const winObj = list.find(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
+            const liveVer = winObj?.version || '';
+
             if (liveVer && versionConfig.lastVersions.live !== liveVer) {
                 await dispatch1to1Embed('live', liveVer);
                 versionConfig.lastVersions.live = liveVer;
@@ -97,10 +98,12 @@ async function checkRobloxVersions() {
     try {
         const futureRes = await fetch('https://weao.xyz/api/versions/future');
         if (futureRes.ok) {
-            const rawData = await futureRes.json();
-            const data = Array.isArray(rawData) ? rawData[0] : rawData;
-            const betaVer = data?.version || data?.windowsVersion || '';
-            const hiddenVer = data?.hiddenVersion || '';
+            const data = await futureRes.json();
+            const list = Array.isArray(data) ? data : [data];
+            const winObj = list.find(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
+            
+            const betaVer = winObj?.version || '';
+            const hiddenVer = winObj?.hiddenVersion || '';
 
             if (betaVer && versionConfig.lastVersions.beta !== betaVer) {
                 await dispatch1to1Embed('beta', betaVer);
@@ -119,6 +122,7 @@ async function checkRobloxVersions() {
 }
 
 async function dispatch1to1Embed(type, versionString) {
+    if (versionString === 'N/A' || !versionString) return;
     const timestampUnix = Math.floor(Date.now() / 1000);
     const embed = new EmbedBuilder();
     let componentsArray = [];
@@ -241,15 +245,19 @@ client.on('messageCreate', async (message) => {
         try {
             const res = await fetch('https://weao.xyz/api/versions/current');
             if (!res.ok) throw new Error("API response error");
-            const rawData = await res.json();
+            const data = await res.json();
             
-            // Handles if API yields an array or an embedded structural object configuration
-            const data = Array.isArray(rawData) ? rawData[0] : rawData;
+            const list = Array.isArray(data) ? data : [data];
+            
+            const winObj = list.find(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
+            const macObj = list.find(e => e.client?.toLowerCase() === 'mac' || e.client?.toLowerCase() === 'macos' || e.platform?.toLowerCase() === 'mac');
+            const androidObj = list.find(e => e.client?.toLowerCase() === 'android' || e.platform?.toLowerCase() === 'android');
+            const iosObj = list.find(e => e.client?.toLowerCase() === 'ios' || e.platform?.toLowerCase() === 'ios');
 
-            const winVer = data?.version || data?.windowsVersion || data?.winVersion || 'N/A';
-            const macVer = data?.macVersion || data?.macosVersion || 'N/A';
-            const androidVer = data?.androidVersion || data?.android || 'N/A';
-            const iosVer = data?.iosVersion || data?.ios || 'N/A';
+            const winVer = winObj?.version || 'N/A';
+            const macVer = macObj?.version || 'N/A';
+            const androidVer = androidObj?.version || 'N/A';
+            const iosVer = iosObj?.version || 'N/A';
 
             const versionEmbed = new EmbedBuilder()
                 .setColor(0x00FF87)
@@ -266,12 +274,12 @@ client.on('messageCreate', async (message) => {
 
             const winLink = `https://rdd.weao.xyz/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(winVer)}&includeLauncher=true&parallelDownloads=true`;
             const macLink = `https://rdd.weao.xyz/?channel=LIVE&binaryType=MacPlayer&version=${encodeURIComponent(macVer)}&includeLauncher=true&parallelDownloads=true`;
-            const androidLink = "https://play.google.com/store/apps/details?id=com.roblox.client&pli=1";
+            const androidLink = "https://play.google.com/store/apps/details?id=com.roblox.client";
             const iosLink = "https://apps.apple.com/us/app/roblox/id431946152";
 
             const btnRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setLabel('Download Win').setStyle(ButtonStyle.Link).setURL(winLink).setDisabled(winVer === 'N/A'),
-                new ButtonBuilder().setLabel('Download Mac').setStyle(ButtonStyle.Link).setURL(macLink).setDisabled(macVer === 'N/A'),
+                new ButtonBuilder().setLabel('Download Win').setStyle(ButtonStyle.Link).setURL(winVer !== 'N/A' ? winLink : 'https://rdd.weao.xyz'),
+                new ButtonBuilder().setLabel('Download Mac').setStyle(ButtonStyle.Link).setURL(macVer !== 'N/A' ? macLink : 'https://rdd.weao.xyz'),
                 new ButtonBuilder().setLabel('Play Store').setStyle(ButtonStyle.Link).setURL(androidLink),
                 new ButtonBuilder().setLabel('App Store').setStyle(ButtonStyle.Link).setURL(iosLink)
             );
@@ -288,23 +296,15 @@ client.on('messageCreate', async (message) => {
         try {
             const res = await fetch('https://weao.xyz/api/versions/past');
             if (!res.ok) throw new Error("API structural error");
-            const rawData = await res.json();
+            const data = await res.json();
             
-            // Historic datasets can be a sequential history collection; inspect first array elements securely
-            let pastWin = 'N/A';
-            let pastMac = 'N/A';
+            const list = Array.isArray(data) ? data : [data];
 
-            if (Array.isArray(rawData)) {
-                // If it's an array of historic snapshots, search for the most recent valid properties
-                const winTarget = rawData.find(item => item.version || item.windowsVersion);
-                const macTarget = rawData.find(item => item.macVersion || item.macosVersion);
-                
-                pastWin = winTarget?.version || winTarget?.windowsVersion || 'N/A';
-                pastMac = macTarget?.macVersion || macTarget?.macosVersion || 'N/A';
-            } else if (rawData) {
-                pastWin = rawData.version || rawData.windowsVersion || 'N/A';
-                pastMac = rawData.macVersion || rawData.macosVersion || 'N/A';
-            }
+            const winPast = list.filter(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
+            const macPast = list.filter(e => e.client?.toLowerCase() === 'mac' || e.client?.toLowerCase() === 'macos' || e.platform?.toLowerCase() === 'mac');
+
+            const pastWin = winPast[0]?.version || 'N/A';
+            const pastMac = macPast[0]?.version || 'N/A';
 
             const downgradeEmbed = new EmbedBuilder()
                 .setColor(0xFFAA00)
@@ -321,8 +321,8 @@ client.on('messageCreate', async (message) => {
             const macLink = `https://rdd.weao.xyz/?channel=LIVE&binaryType=MacPlayer&version=${encodeURIComponent(pastMac)}&includeLauncher=true&parallelDownloads=true`;
 
             const btnRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setLabel('Download Old Win').setStyle(ButtonStyle.Link).setURL(winLink).setDisabled(pastWin === 'N/A'),
-                new ButtonBuilder().setLabel('Download Old Mac').setStyle(ButtonStyle.Link).setURL(macLink).setDisabled(pastMac === 'N/A')
+                new ButtonBuilder().setLabel('Download Old Win').setStyle(ButtonStyle.Link).setURL(pastWin !== 'N/A' ? winLink : 'https://rdd.weao.xyz'),
+                new ButtonBuilder().setLabel('Download Old Mac').setStyle(ButtonStyle.Link).setURL(pastMac !== 'N/A' ? macLink : 'https://rdd.weao.xyz')
             );
 
             return processing.edit({ content: null, embeds: [downgradeEmbed], components: [btnRow] });
@@ -363,10 +363,10 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing execution rights.");
         const res = await fetch('https://weao.xyz/api/versions/current');
         if (!res.ok) return sendError(message, "Target network endpoint failed.");
-        const rawData = await res.json();
-        const data = Array.isArray(rawData) ? rawData[0] : rawData;
-        const liveVer = data?.version || data?.windowsVersion || 'N/A';
-        await dispatch1to1Embed('live', liveVer);
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : [data];
+        const winObj = list.find(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
+        await dispatch1to1Embed('live', winObj?.version || 'N/A');
         return sendSuccess(message, "Dispatched current Live version layout.");
     }
 
@@ -374,11 +374,11 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing execution rights.");
         const res = await fetch('https://weao.xyz/api/versions/future');
         if (!res.ok) return sendError(message, "Target network endpoint failed.");
-        const rawData = await res.json();
-        const data = Array.isArray(rawData) ? rawData[0] : rawData;
-        const betaVer = data?.version || data?.windowsVersion || 'N/A';
-        await dispatch1to1Embed('beta', betaVer);
-        await dispatch1to1Embed('hidden', data?.hiddenVersion || 'N/A');
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : [data];
+        const winObj = list.find(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
+        await dispatch1to1Embed('beta', winObj?.version || 'N/A');
+        await dispatch1to1Embed('hidden', winObj?.hiddenVersion || 'N/A');
         return sendSuccess(message, "Dispatched current Beta version layouts.");
     }
 
