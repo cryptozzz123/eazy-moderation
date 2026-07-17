@@ -26,7 +26,7 @@ let versionConfig = {
 };
 
 // Global Bot Version Constant
-const BOT_VERSION = '1.5.0'; 
+const BOT_VERSION = '1.5.1'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -80,9 +80,9 @@ async function checkRobloxVersions() {
     try {
         const currentRes = await fetch('https://weao.xyz/api/versions/current');
         if (currentRes.ok) {
-            const data = await currentRes.json();
-            // Checking the main global text version or the specific windows version hash
-            const liveVer = data?.clientVersionUpload || data?.version || '';
+            const rawData = await currentRes.json();
+            const data = Array.isArray(rawData) ? rawData[0] : rawData;
+            const liveVer = data?.version || '';
             if (liveVer && versionConfig.lastVersions.live !== liveVer) {
                 await dispatch1to1Embed('live', liveVer);
                 versionConfig.lastVersions.live = liveVer;
@@ -96,7 +96,8 @@ async function checkRobloxVersions() {
     try {
         const futureRes = await fetch('https://weao.xyz/api/versions/future');
         if (futureRes.ok) {
-            const data = await futureRes.json();
+            const rawData = await futureRes.json();
+            const data = Array.isArray(rawData) ? rawData[0] : rawData;
             const betaVer = data?.version || '';
             const hiddenVer = data?.hiddenVersion || '';
 
@@ -243,9 +244,11 @@ client.on('messageCreate', async (message) => {
         try {
             const res = await fetch('https://weao.xyz/api/versions/current');
             if (!res.ok) throw new Error("API response error");
-            const data = await res.json();
+            const rawData = await res.json();
+            
+            // Unpack both array wrappers or direct object formatting safely
+            const data = Array.isArray(rawData) ? rawData[0] : rawData;
 
-            // Resolve dynamic fields from API matching Windows, macOS, Android, iOS
             const winVer = data?.version || 'N/A';
             const macVer = data?.macVersion || 'N/A';
             const androidVer = data?.androidVersion || 'N/A';
@@ -264,7 +267,6 @@ client.on('messageCreate', async (message) => {
                 .setTimestamp()
                 .setFooter({ text: 'WEAO Live Client Engine Sync' });
 
-            // Generate auto-updating unique downlinks matching current variables
             const winLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(winVer)}&includeLauncher=true&parallelDownloads=true`;
             const macLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=MacPlayer&version=${encodeURIComponent(macVer)}&includeLauncher=true&parallelDownloads=true`;
             const androidLink = "https://play.google.com/store/apps/details?id=com.roblox.client&pli=1";
@@ -289,9 +291,10 @@ client.on('messageCreate', async (message) => {
         try {
             const res = await fetch('https://weao.xyz/api/versions/past');
             if (!res.ok) throw new Error("API structural error");
-            const data = await res.json();
+            const rawData = await res.json();
+            
+            const data = Array.isArray(rawData) ? rawData[0] : rawData;
 
-            // Retrieve structural historic items array
             const pastWin = data?.version || 'N/A';
             const pastMac = data?.macVersion || 'N/A';
 
@@ -352,7 +355,8 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing execution rights.");
         const res = await fetch('https://weao.xyz/api/versions/current');
         if (!res.ok) return sendError(message, "Target network endpoint failed.");
-        const data = await res.json();
+        const rawData = await res.json();
+        const data = Array.isArray(rawData) ? rawData[0] : rawData;
         await dispatch1to1Embed('live', data?.version || 'N/A');
         return sendSuccess(message, "Dispatched current Live version layout.");
     }
@@ -361,7 +365,8 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing execution rights.");
         const res = await fetch('https://weao.xyz/api/versions/future');
         if (!res.ok) return sendError(message, "Target network endpoint failed.");
-        const data = await res.json();
+        const rawData = await res.json();
+        const data = Array.isArray(rawData) ? rawData[0] : rawData;
         await dispatch1to1Embed('beta', data?.version || 'N/A');
         await dispatch1to1Embed('hidden', data?.hiddenVersion || 'N/A');
         return sendSuccess(message, "Dispatched current Beta version layouts.");
