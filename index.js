@@ -26,7 +26,7 @@ let versionConfig = {
 };
 
 // Global Bot Version Constant
-const BOT_VERSION = '1.5.1'; 
+const BOT_VERSION = '1.5.2'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -81,8 +81,9 @@ async function checkRobloxVersions() {
         const currentRes = await fetch('https://weao.xyz/api/versions/current');
         if (currentRes.ok) {
             const rawData = await currentRes.json();
+            // Try explicit matching across either arrays or direct properties
             const data = Array.isArray(rawData) ? rawData[0] : rawData;
-            const liveVer = data?.version || '';
+            const liveVer = data?.version || data?.windowsVersion || data?.winVersion || '';
             if (liveVer && versionConfig.lastVersions.live !== liveVer) {
                 await dispatch1to1Embed('live', liveVer);
                 versionConfig.lastVersions.live = liveVer;
@@ -98,7 +99,7 @@ async function checkRobloxVersions() {
         if (futureRes.ok) {
             const rawData = await futureRes.json();
             const data = Array.isArray(rawData) ? rawData[0] : rawData;
-            const betaVer = data?.version || '';
+            const betaVer = data?.version || data?.windowsVersion || '';
             const hiddenVer = data?.hiddenVersion || '';
 
             if (betaVer && versionConfig.lastVersions.beta !== betaVer) {
@@ -128,7 +129,7 @@ async function dispatch1to1Embed(type, versionString) {
              .setDescription(`This is a live ROBLOX update, Real is patched.\n\n**Platform:** Windows\n**Roblox Version:** \`${versionString}\`\n**Detected:** <t:${timestampUnix}:F>`)
              .setImage("https://cdn.discordapp.com/attachments/1499365932685070486/1524082621951377630/LIVE.png");
 
-        const downloadLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(versionString)}&includeLauncher=true&parallelDownloads=true`;
+        const downloadLink = `https://rdd.weao.xyz/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(versionString)}&includeLauncher=true&parallelDownloads=true`;
 
         const downloadRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -193,10 +194,6 @@ client.on('messageCreate', async (message) => {
     globalBotLogs.push({ user: message.author.tag, command: `!${command} ${args.join(" ")}`.trim(), timestamp: new Date().toLocaleTimeString() });
     if (globalBotLogs.length > 150) globalBotLogs.shift();
 
-    // =========================================================================
-    // ⚙️ SYSTEMS LOGIC ENGINE
-    // =========================================================================
-
     if (command === 'help') {
         const cmdsEmbed = new EmbedBuilder()
             .setColor(0x3498DB)
@@ -246,13 +243,13 @@ client.on('messageCreate', async (message) => {
             if (!res.ok) throw new Error("API response error");
             const rawData = await res.json();
             
-            // Unpack both array wrappers or direct object formatting safely
+            // Handles if API yields an array or an embedded structural object configuration
             const data = Array.isArray(rawData) ? rawData[0] : rawData;
 
-            const winVer = data?.version || 'N/A';
-            const macVer = data?.macVersion || 'N/A';
-            const androidVer = data?.androidVersion || 'N/A';
-            const iosVer = data?.iosVersion || 'N/A';
+            const winVer = data?.version || data?.windowsVersion || data?.winVersion || 'N/A';
+            const macVer = data?.macVersion || data?.macosVersion || 'N/A';
+            const androidVer = data?.androidVersion || data?.android || 'N/A';
+            const iosVer = data?.iosVersion || data?.ios || 'N/A';
 
             const versionEmbed = new EmbedBuilder()
                 .setColor(0x00FF87)
@@ -267,14 +264,14 @@ client.on('messageCreate', async (message) => {
                 .setTimestamp()
                 .setFooter({ text: 'WEAO Live Client Engine Sync' });
 
-            const winLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(winVer)}&includeLauncher=true&parallelDownloads=true`;
-            const macLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=MacPlayer&version=${encodeURIComponent(macVer)}&includeLauncher=true&parallelDownloads=true`;
+            const winLink = `https://rdd.weao.xyz/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(winVer)}&includeLauncher=true&parallelDownloads=true`;
+            const macLink = `https://rdd.weao.xyz/?channel=LIVE&binaryType=MacPlayer&version=${encodeURIComponent(macVer)}&includeLauncher=true&parallelDownloads=true`;
             const androidLink = "https://play.google.com/store/apps/details?id=com.roblox.client&pli=1";
             const iosLink = "https://apps.apple.com/us/app/roblox/id431946152";
 
             const btnRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setLabel('Download Win').setStyle(ButtonStyle.Link).setURL(winLink),
-                new ButtonBuilder().setLabel('Download Mac').setStyle(ButtonStyle.Link).setURL(macLink),
+                new ButtonBuilder().setLabel('Download Win').setStyle(ButtonStyle.Link).setURL(winLink).setDisabled(winVer === 'N/A'),
+                new ButtonBuilder().setLabel('Download Mac').setStyle(ButtonStyle.Link).setURL(macLink).setDisabled(macVer === 'N/A'),
                 new ButtonBuilder().setLabel('Play Store').setStyle(ButtonStyle.Link).setURL(androidLink),
                 new ButtonBuilder().setLabel('App Store').setStyle(ButtonStyle.Link).setURL(iosLink)
             );
@@ -293,10 +290,21 @@ client.on('messageCreate', async (message) => {
             if (!res.ok) throw new Error("API structural error");
             const rawData = await res.json();
             
-            const data = Array.isArray(rawData) ? rawData[0] : rawData;
+            // Historic datasets can be a sequential history collection; inspect first array elements securely
+            let pastWin = 'N/A';
+            let pastMac = 'N/A';
 
-            const pastWin = data?.version || 'N/A';
-            const pastMac = data?.macVersion || 'N/A';
+            if (Array.isArray(rawData)) {
+                // If it's an array of historic snapshots, search for the most recent valid properties
+                const winTarget = rawData.find(item => item.version || item.windowsVersion);
+                const macTarget = rawData.find(item => item.macVersion || item.macosVersion);
+                
+                pastWin = winTarget?.version || winTarget?.windowsVersion || 'N/A';
+                pastMac = macTarget?.macVersion || macTarget?.macosVersion || 'N/A';
+            } else if (rawData) {
+                pastWin = rawData.version || rawData.windowsVersion || 'N/A';
+                pastMac = rawData.macVersion || rawData.macosVersion || 'N/A';
+            }
 
             const downgradeEmbed = new EmbedBuilder()
                 .setColor(0xFFAA00)
@@ -309,12 +317,12 @@ client.on('messageCreate', async (message) => {
                 .setTimestamp()
                 .setFooter({ text: 'WEAO Legacy Deployment Mapping' });
 
-            const winLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(pastWin)}&includeLauncher=true&parallelDownloads=true`;
-            const macLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=MacPlayer&version=${encodeURIComponent(pastMac)}&includeLauncher=true&parallelDownloads=true`;
+            const winLink = `https://rdd.weao.xyz/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(pastWin)}&includeLauncher=true&parallelDownloads=true`;
+            const macLink = `https://rdd.weao.xyz/?channel=LIVE&binaryType=MacPlayer&version=${encodeURIComponent(pastMac)}&includeLauncher=true&parallelDownloads=true`;
 
             const btnRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setLabel('Download Old Win').setStyle(ButtonStyle.Link).setURL(winLink),
-                new ButtonBuilder().setLabel('Download Old Mac').setStyle(ButtonStyle.Link).setURL(macLink)
+                new ButtonBuilder().setLabel('Download Old Win').setStyle(ButtonStyle.Link).setURL(winLink).setDisabled(pastWin === 'N/A'),
+                new ButtonBuilder().setLabel('Download Old Mac').setStyle(ButtonStyle.Link).setURL(macLink).setDisabled(pastMac === 'N/A')
             );
 
             return processing.edit({ content: null, embeds: [downgradeEmbed], components: [btnRow] });
@@ -357,7 +365,8 @@ client.on('messageCreate', async (message) => {
         if (!res.ok) return sendError(message, "Target network endpoint failed.");
         const rawData = await res.json();
         const data = Array.isArray(rawData) ? rawData[0] : rawData;
-        await dispatch1to1Embed('live', data?.version || 'N/A');
+        const liveVer = data?.version || data?.windowsVersion || 'N/A';
+        await dispatch1to1Embed('live', liveVer);
         return sendSuccess(message, "Dispatched current Live version layout.");
     }
 
@@ -367,7 +376,8 @@ client.on('messageCreate', async (message) => {
         if (!res.ok) return sendError(message, "Target network endpoint failed.");
         const rawData = await res.json();
         const data = Array.isArray(rawData) ? rawData[0] : rawData;
-        await dispatch1to1Embed('beta', data?.version || 'N/A');
+        const betaVer = data?.version || data?.windowsVersion || 'N/A';
+        await dispatch1to1Embed('beta', betaVer);
         await dispatch1to1Embed('hidden', data?.hiddenVersion || 'N/A');
         return sendSuccess(message, "Dispatched current Beta version layouts.");
     }
