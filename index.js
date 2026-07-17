@@ -26,7 +26,7 @@ let versionConfig = {
 };
 
 // Global Bot Version Constant
-const BOT_VERSION = '1.4.1'; 
+const BOT_VERSION = '1.5.0'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -81,7 +81,8 @@ async function checkRobloxVersions() {
         const currentRes = await fetch('https://weao.xyz/api/versions/current');
         if (currentRes.ok) {
             const data = await currentRes.json();
-            const liveVer = data?.version || '';
+            // Checking the main global text version or the specific windows version hash
+            const liveVer = data?.clientVersionUpload || data?.version || '';
             if (liveVer && versionConfig.lastVersions.live !== liveVer) {
                 await dispatch1to1Embed('live', liveVer);
                 versionConfig.lastVersions.live = liveVer;
@@ -126,11 +127,13 @@ async function dispatch1to1Embed(type, versionString) {
              .setDescription(`This is a live ROBLOX update, Real is patched.\n\n**Platform:** Windows\n**Roblox Version:** \`${versionString}\`\n**Detected:** <t:${timestampUnix}:F>`)
              .setImage("https://cdn.discordapp.com/attachments/1499365932685070486/1524082621951377630/LIVE.png");
 
+        const downloadLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(versionString)}&includeLauncher=true&parallelDownloads=true`;
+
         const downloadRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-                .setLabel('Download')
+                .setLabel('Download Windows')
                 .setStyle(ButtonStyle.Link)
-                .setURL('https://rdd.weao.xyz/')
+                .setURL(downloadLink)
         );
         componentsArray.push(downloadRow);
 
@@ -193,7 +196,7 @@ client.on('messageCreate', async (message) => {
     // ⚙️ SYSTEMS LOGIC ENGINE
     // =========================================================================
 
-    if (command === 'cmds' || command === 'help') {
+    if (command === 'help') {
         const cmdsEmbed = new EmbedBuilder()
             .setColor(0x3498DB)
             .setTitle('📖 Eazy Moderation | Complete Commands Registry')
@@ -203,8 +206,11 @@ client.on('messageCreate', async (message) => {
                 `• \`ping\` — Check real-time Discord API latency responses.\n` +
                 `• \`version\` — Return system architecture build strings.\n` +
                 `• \`status\` — Multi-endpoint framework health check values.\n` +
-                `• \`cmds\` / \`help\` — Display this clean master systems guide.\n` +
+                `• \`help\` — Display this clean master systems guide.\n` +
                 `• \`botlogs\` — View last 10 commands parsed through memory.\n\n` +
+                `**Roblox Version Engines**\n` +
+                `• \`currentver\` — Returns current versions for PC, Mac, Android & iOS with auto-updating download buttons.\n` +
+                `• \`downgrade\` — Returns previous production rollback builds for PC and Mac with tracking buttons.\n\n` +
                 `**Exploit Automation Tracking**\n` +
                 `• \`check [name]\` — Query structural exploit bypass signatures.\n` +
                 `• \`track-channel #chan\` — Register target channel for dynamic Roblox patches.\n` +
@@ -230,6 +236,89 @@ client.on('messageCreate', async (message) => {
             .setFooter({ text: `System Version v${BOT_VERSION} • Operations Profile` })
             .setTimestamp();
         return message.reply({ embeds: [cmdsEmbed] });
+    }
+
+    if (command === 'currentver') {
+        const processing = await message.reply("Fetching current engine specifications...");
+        try {
+            const res = await fetch('https://weao.xyz/api/versions/current');
+            if (!res.ok) throw new Error("API response error");
+            const data = await res.json();
+
+            // Resolve dynamic fields from API matching Windows, macOS, Android, iOS
+            const winVer = data?.version || 'N/A';
+            const macVer = data?.macVersion || 'N/A';
+            const androidVer = data?.androidVersion || 'N/A';
+            const iosVer = data?.iosVersion || 'N/A';
+
+            const versionEmbed = new EmbedBuilder()
+                .setColor(0x00FF87)
+                .setTitle('🎮 Current Roblox Production Build Metrics')
+                .setDescription('Displaying production layer version deployments verified across modern architectures.')
+                .addFields(
+                    { name: '🖥️ Windows Player', value: `\`${winVer}\``, inline: false },
+                    { name: '🍎 macOS Client', value: `\`${macVer}\``, inline: false },
+                    { name: '🤖 Android App', value: `\`${androidVer}\``, inline: true },
+                    { name: '📱 iOS App', value: `\`${iosVer}\``, inline: true }
+                )
+                .setTimestamp()
+                .setFooter({ text: 'WEAO Live Client Engine Sync' });
+
+            // Generate auto-updating unique downlinks matching current variables
+            const winLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(winVer)}&includeLauncher=true&parallelDownloads=true`;
+            const macLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=MacPlayer&version=${encodeURIComponent(macVer)}&includeLauncher=true&parallelDownloads=true`;
+            const androidLink = "https://play.google.com/store/apps/details?id=com.roblox.client&pli=1";
+            const iosLink = "https://apps.apple.com/us/app/roblox/id431946152";
+
+            const btnRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setLabel('Download Win').setStyle(ButtonStyle.Link).setURL(winLink),
+                new ButtonBuilder().setLabel('Download Mac').setStyle(ButtonStyle.Link).setURL(macLink),
+                new ButtonBuilder().setLabel('Play Store').setStyle(ButtonStyle.Link).setURL(androidLink),
+                new ButtonBuilder().setLabel('App Store').setStyle(ButtonStyle.Link).setURL(iosLink)
+            );
+
+            return processing.edit({ content: null, embeds: [versionEmbed], components: [btnRow] });
+        } catch (err) {
+            console.error(err);
+            return processing.edit("❌ Failed to contact standard live tracker network components.");
+        }
+    }
+
+    if (command === 'downgrade') {
+        const processing = await message.reply("Analyzing history arrays for rollback logs...");
+        try {
+            const res = await fetch('https://weao.xyz/api/versions/past');
+            if (!res.ok) throw new Error("API structural error");
+            const data = await res.json();
+
+            // Retrieve structural historic items array
+            const pastWin = data?.version || 'N/A';
+            const pastMac = data?.macVersion || 'N/A';
+
+            const downgradeEmbed = new EmbedBuilder()
+                .setColor(0xFFAA00)
+                .setTitle('⏳ Roblox Historical Rollback Version Engine')
+                .setDescription('Displays deployment records tracking the prior functional client versions before the active production block.')
+                .addFields(
+                    { name: '🖥️ Previous Windows Player Build', value: `\`${pastWin}\``, inline: false },
+                    { name: '🍎 Previous macOS Client Build', value: `\`${pastMac}\``, inline: false }
+                )
+                .setTimestamp()
+                .setFooter({ text: 'WEAO Legacy Deployment Mapping' });
+
+            const winLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(pastWin)}&includeLauncher=true&parallelDownloads=true`;
+            const macLink = `https://rdd.weao.gg/?channel=LIVE&binaryType=MacPlayer&version=${encodeURIComponent(pastMac)}&includeLauncher=true&parallelDownloads=true`;
+
+            const btnRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setLabel('Download Old Win').setStyle(ButtonStyle.Link).setURL(winLink),
+                new ButtonBuilder().setLabel('Download Old Mac').setStyle(ButtonStyle.Link).setURL(macLink)
+            );
+
+            return processing.edit({ content: null, embeds: [downgradeEmbed], components: [btnRow] });
+        } catch (err) {
+            console.error(err);
+            return processing.edit("❌ Failed to parse historic databases.");
+        }
     }
 
     if (command === 'track-channel') {
