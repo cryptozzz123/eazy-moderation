@@ -423,15 +423,14 @@ client.on('messageCreate', async (message) => {
             
             if (EXECUTOR_IMAGES[query.toLowerCase()]) statusEmbed.setImage(EXECUTOR_IMAGES[query.toLowerCase()]);
 
-            const targetWebsite = matched.website || "https://weao.xyz";
-            const targetDiscord = matched.discord || "https://discord.gg";
+            const targetWebsite = matched.websitelink || "https://weao.xyz";
+            const targetDiscord = matched.discordlink || "https://discord.gg";
 
             const buttons = [
                 new ButtonBuilder().setLabel('Website').setStyle(ButtonStyle.Link).setURL(targetWebsite),
                 new ButtonBuilder().setLabel('Discord').setStyle(ButtonStyle.Link).setURL(targetDiscord)
             ];
 
-            // If the exploit type matches "Paid", append the custom key acquisition endpoint
             if (matched.type?.toLowerCase() === 'paid') {
                 buttons.push(new ButtonBuilder().setLabel('Get Key').setStyle(ButtonStyle.Link).setURL('https://rcheatz.com/'));
             }
