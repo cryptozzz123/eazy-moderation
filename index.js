@@ -25,7 +25,7 @@ let versionConfig = {
     }
 };
 
-const BOT_VERSION = '1.5.3'; 
+const BOT_VERSION = '1.6.0'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -45,21 +45,21 @@ function saveConfig() {
 }
 
 const EXECUTOR_IMAGES = {
-    "volt": "https://cdn.discordapp.com/attachments/1478359860570751159/1526169379459563601/sunc.png?ex=6a560b7e&is=6a54b9fe&hm=94313523b8e6e5d2d6bd9542845db7f4d1f4896d66163b554bc39f0dc53aff46&",
-    "potassium": "https://cdn.discordapp.com/attachments/1478359860570751159/1526176916531318814/sunc.png?ex=6a561283&is=6a54c103&hm=c467bc57700a616c8d5cc6d546a9a3d987f7c073e6e77495d727f57bfa6ce014&",
-    "xeno": "https://cdn.discordapp.com/attachments/1478359860570751159/1526176811711467590/sunc.png?ex=6a56126a&is=6a54c0ea&hm=782d4698fb80a3ecbb3e773287304785c48720265ffea0a473527fda63c3dcbd&",
-    "solara": "https://cdn.discordapp.com/attachments/1478359860570751159/1526138851704307712/sunc.png?ex=6a55ef10&is=6a549d90&hm=9d7d739a883e6f27fe36b887b812a3997c7ef0f3ec21f1a4b9819008d732b5de&",
-    "wave": "https://cdn.discordapp.com/attachments/1478359860570751159/1526186867026825366/sunc.png?ex=6a561bc8&is=6a54ca48&hm=6a2fad8ccc8fb443b78740d61b865810d0573c0f6ab179cd3b1530200dc1daf2&",
-    "real": "https://cdn.discordapp.com/attachments/1478359860570751159/1526177102817398886/sunc.png?ex=6a5612b0&is=6a54c130&hm=d33560ab3dd06cc000e7b35160c6956ff807c091f638f2bf1c26603c71474d6f&",
-    "velocity": "https://cdn.discordapp.com/attachments/1478359860570751159/1526181791759601765/sunc.png?ex=6a56170e&is=6a54c58e&hm=b29224df4cfeeb363d4bf7ee1527b33aae1c161e97904c0c13e6cf6fb3a4dddd&",
-    "madium": "https://cdn.discordapp.com/attachments/1478359860570751159/1526177030838812672/sunc.png?ex=6a56129f&is=6a54c11f&hm=242e9135e53753c646e2c6b29f961d85ac816a56d03cc6c6da6e3454c2575b57&",
-    "synapse z": "https://cdn.discordapp.com/attachments/1478359860570751159/1526186942256123995/sunc.png?ex=6a561bda&is=6a54ca5a&hm=7440f9d83409a79c700f211b04b115d39f13a405ebbfe6f25cad513ee3c571b8&",
-    "cosmic": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187048392851609/sunc.png?ex=6a561bf3&is=6a54ca73&hm=4cb3b59db869fc938de94aa50dc71801daf397a0742fe010363ccc740dd6d4f6&",
-    "macsploit": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187094005911602/sunc.png?ex=6a561bfe&is=6a54ca7e&hm=d42db7cd6d9e70fd314b614c5a514c6a69afb984cd476665f6a353957d6eb465&",
-    "opiumware": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187176956661860/sunc.png?ex=6a561c12&is=6a54ca92&hm=eb4f2a07daa855119e61f3c17d8205d966c64236c21fa2e6749b791df248f302&",
-    "delta": "https://cdn.discordapp.com/attachments/1478359860570751159/1526036362766057472/sunc.png?ex=6a558f9d&is=6a543e1d&hm=4e38ffbaedfe2b194d3f4ce4ca2da3210af1657c8005bbbf233c021e5862a05b&",
-    "codex": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187244988141618/sunc.png?ex=6a561c22&is=6a54caa2&hm=c7c0e84f4542e0e48e9d9f85a7a2e87a1a250c34506fc86b4ebf6fa5459157a4&",
-    "vega x": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187398478696519/sunc.png?ex=6a561c46&is=6a54cac6&hm=8244fc048a27283d497680ade5185b52fc49c9fca83b73d3397058df989ef001&"
+    "volt": "https://cdn.discordapp.com/attachments/1478359860570751159/1526169379459563601/sunc.png",
+    "potassium": "https://cdn.discordapp.com/attachments/1478359860570751159/1526176916531318814/sunc.png",
+    "xeno": "https://cdn.discordapp.com/attachments/1478359860570751159/1526176811711467590/sunc.png",
+    "solara": "https://cdn.discordapp.com/attachments/1478359860570751159/1526138851704307712/sunc.png",
+    "wave": "https://cdn.discordapp.com/attachments/1478359860570751159/1526186867026825366/sunc.png",
+    "real": "https://cdn.discordapp.com/attachments/1478359860570751159/1526177102817398886/sunc.png",
+    "velocity": "https://cdn.discordapp.com/attachments/1478359860570751159/1526181791759601765/sunc.png",
+    "madium": "https://cdn.discordapp.com/attachments/1478359860570751159/1526177030838812672/sunc.png",
+    "synapse z": "https://cdn.discordapp.com/attachments/1478359860570751159/1526186942256123995/sunc.png",
+    "cosmic": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187048392851609/sunc.png",
+    "macsploit": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187094005911602/sunc.png",
+    "opiumware": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187176956661860/sunc.png",
+    "delta": "https://cdn.discordapp.com/attachments/1478359860570751159/1526036362766057472/sunc.png",
+    "codex": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187244988141618/sunc.png",
+    "vega x": "https://cdn.discordapp.com/attachments/1478359860570751159/1526187398478696519/sunc.png"
 };
 
 const globalBotLogs = [];
@@ -80,9 +80,7 @@ async function checkRobloxVersions() {
         const currentRes = await fetch('https://weao.xyz/api/versions/current');
         if (currentRes.ok) {
             const data = await currentRes.json();
-            const list = Array.isArray(data) ? data : [data];
-            const winObj = list.find(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
-            const liveVer = winObj?.version || '';
+            const liveVer = data.Windows || '';
 
             if (liveVer && versionConfig.lastVersions.live !== liveVer) {
                 await dispatch1to1Embed('live', liveVer);
@@ -92,31 +90,6 @@ async function checkRobloxVersions() {
         }
     } catch (err) {
         console.error("❌ Error polling live endpoint:", err.message);
-    }
-
-    try {
-        const futureRes = await fetch('https://weao.xyz/api/versions/future');
-        if (futureRes.ok) {
-            const data = await futureRes.json();
-            const list = Array.isArray(data) ? data : [data];
-            const winObj = list.find(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
-            
-            const betaVer = winObj?.version || '';
-            const hiddenVer = winObj?.hiddenVersion || '';
-
-            if (betaVer && versionConfig.lastVersions.beta !== betaVer) {
-                await dispatch1to1Embed('beta', betaVer);
-                versionConfig.lastVersions.beta = betaVer;
-                saveConfig();
-            }
-            if (hiddenVer && versionConfig.lastVersions.hidden !== hiddenVer) {
-                await dispatch1to1Embed('hidden', hiddenVer);
-                versionConfig.lastVersions.hidden = hiddenVer;
-                saveConfig();
-            }
-        }
-    } catch (err) {
-        console.error("❌ Error polling future endpoint:", err.message);
     }
 }
 
@@ -141,18 +114,6 @@ async function dispatch1to1Embed(type, versionString) {
                 .setURL(downloadLink)
         );
         componentsArray.push(downloadRow);
-
-    } else if (type === 'beta') {
-        embed.setColor(0x00B500)
-             .setTitle('Beta update detected!')
-             .setDescription(`A new ROBLOX beta build was detected before LIVE.\n\n**Platform:** Windows\n**Roblox Version:** \`${versionString}\`\n**Detected:** <t:${timestampUnix}:F>`)
-             .setImage("https://cdn.discordapp.com/attachments/1499365932685070486/1524487983984672988/BETA.png");
-
-    } else if (type === 'hidden') {
-        embed.setColor(0x1E7BFF)
-             .setTitle('Version-hidden detected!')
-             .setDescription(`A new WindowsPlayer version-hidden appeared in DeployHistory.\n\n**Platform:** Windows\n**Roblox Version:** \`${versionString}\`\n**Detected:** <t:${timestampUnix}:F>`)
-             .setImage("https://cdn.discordapp.com/attachments/1499365932685070486/1523828898872426617/HIDDEN.png");
     }
 
     for (const channelId of versionConfig.channels) {
@@ -211,7 +172,8 @@ client.on('messageCreate', async (message) => {
                 `• \`botlogs\` — View last 10 commands parsed through memory.\n\n` +
                 `**Roblox Version Engines**\n` +
                 `• \`currentver\` — Returns current versions for PC, Mac, Android & iOS with auto-updating download buttons.\n` +
-                `• \`downgrade\` — Returns previous production rollback builds for PC and Mac with tracking buttons.\n\n` +
+                `• \`downgrade\` — Returns previous production rollback builds for PC and Mac.\n` +
+                `• \`futurever\` — Query upcoming deployment configurations tracked inside staging history.\n\n` +
                 `**Exploit Automation Tracking**\n` +
                 `• \`check [name]\` — Query structural exploit bypass signatures and capabilities.\n\n` +
                 `**Punishments & Restraints**\n` +
@@ -242,17 +204,10 @@ client.on('messageCreate', async (message) => {
             if (!res.ok) throw new Error("API response error");
             const data = await res.json();
             
-            const list = Array.isArray(data) ? data : [data];
-            
-            const winObj = list.find(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
-            const macObj = list.find(e => e.client?.toLowerCase() === 'mac' || e.client?.toLowerCase() === 'macos' || e.platform?.toLowerCase() === 'mac');
-            const androidObj = list.find(e => e.client?.toLowerCase() === 'android' || e.platform?.toLowerCase() === 'android');
-            const iosObj = list.find(e => e.client?.toLowerCase() === 'ios' || e.platform?.toLowerCase() === 'ios');
-
-            const winVer = winObj?.version || 'N/A';
-            const macVer = macObj?.version || 'N/A';
-            const androidVer = androidObj?.version || 'N/A';
-            const iosVer = iosObj?.version || 'N/A';
+            const winVer = data.Windows || 'N/A';
+            const macVer = data.Mac || 'N/A';
+            const androidVer = data.Android || 'N/A';
+            const iosVer = data.iOS || 'N/A';
 
             const versionEmbed = new EmbedBuilder()
                 .setColor(0x00FF87)
@@ -273,10 +228,10 @@ client.on('messageCreate', async (message) => {
             const iosLink = "https://apps.apple.com/us/app/roblox/id431946152";
 
             const btnRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setLabel('Download Win').setStyle(ButtonStyle.Link).setURL(winVer !== 'N/A' ? winLink : 'https://rdd.weao.xyz'),
-                new ButtonBuilder().setLabel('Download Mac').setStyle(ButtonStyle.Link).setURL(macVer !== 'N/A' ? macLink : 'https://rdd.weao.xyz'),
-                new ButtonBuilder().setLabel('Play Store').setStyle(ButtonStyle.Link).setURL(androidLink),
-                new ButtonBuilder().setLabel('App Store').setStyle(ButtonStyle.Link).setURL(iosLink)
+                new ButtonBuilder().setLabel('Download Win').setStyle(ButtonStyle.Link).setURL(winVer !== 'N/A' ? winLink : 'https://rdd.weao.xyz/'),
+                new ButtonBuilder().setLabel('Download Mac').setStyle(ButtonStyle.Link).setURL(macVer !== 'N/A' ? macLink : 'https://rdd.weao.xyz/'),
+                new ButtonBuilder().setLabel('Android').setStyle(ButtonStyle.Link).setURL(androidLink),
+                new ButtonBuilder().setLabel('IOS').setStyle(ButtonStyle.Link).setURL(iosLink)
             );
 
             return processing.edit({ content: null, embeds: [versionEmbed], components: [btnRow] });
@@ -293,18 +248,13 @@ client.on('messageCreate', async (message) => {
             if (!res.ok) throw new Error("API structural error");
             const data = await res.json();
             
-            const list = Array.isArray(data) ? data : [data];
-
-            const winPast = list.filter(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
-            const macPast = list.filter(e => e.client?.toLowerCase() === 'mac' || e.client?.toLowerCase() === 'macos' || e.platform?.toLowerCase() === 'mac');
-
-            const pastWin = winPast[0]?.version || 'N/A';
-            const pastMac = macPast[0]?.version || 'N/A';
+            const pastWin = data.Windows || 'N/A';
+            const pastMac = data.Mac || 'N/A';
 
             const downgradeEmbed = new EmbedBuilder()
                 .setColor(0xFFAA00)
                 .setTitle('⏳ Roblox Historical Rollback Version Engine')
-                .setDescription('Displays deployment records tracking the prior functional client versions before the active production block.')
+                .setDescription('Displays deployment records tracking the prior functional client versions before the active production block.\n\nVisit their Docs for More Information.')
                 .addFields(
                     { name: '🖥️ Previous Windows Player Build', value: `\`${pastWin}\``, inline: false },
                     { name: '🍎 Previous macOS Client Build', value: `\`${pastMac}\``, inline: false }
@@ -316,14 +266,42 @@ client.on('messageCreate', async (message) => {
             const macLink = `https://rdd.weao.xyz/?channel=LIVE&binaryType=MacPlayer&version=${encodeURIComponent(pastMac)}&includeLauncher=true&parallelDownloads=true`;
 
             const btnRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setLabel('Download Old Win').setStyle(ButtonStyle.Link).setURL(pastWin !== 'N/A' ? winLink : 'https://rdd.weao.xyz'),
-                new ButtonBuilder().setLabel('Download Old Mac').setStyle(ButtonStyle.Link).setURL(pastMac !== 'N/A' ? macLink : 'https://rdd.weao.xyz')
+                new ButtonBuilder().setLabel('Download Old Win').setStyle(ButtonStyle.Link).setURL(pastWin !== 'N/A' ? winLink : 'https://rdd.weao.xyz/'),
+                new ButtonBuilder().setLabel('Download Old Mac').setStyle(ButtonStyle.Link).setURL(pastMac !== 'N/A' ? macLink : 'https://rdd.weao.xyz/')
             );
 
             return processing.edit({ content: null, embeds: [downgradeEmbed], components: [btnRow] });
         } catch (err) {
             console.error(err);
             return processing.edit("❌ Failed to parse historic databases.");
+        }
+    }
+
+    if (command === 'futurever') {
+        const processing = await message.reply("Querying future staging metrics...");
+        try {
+            const res = await fetch('https://weao.xyz/api/versions/future');
+            if (!res.ok) throw new Error("API structural error");
+            const data = await res.json();
+
+            const futureWin = data.Windows || 'N/A';
+            const futureMac = data.Mac || 'N/A';
+
+            const futureEmbed = new EmbedBuilder()
+                .setColor(0x00B500)
+                .setTitle('🔮 Future Roblox Staging Deployments')
+                .setDescription('Displays forthcoming version builds parsed from next-in-line deployment configurations.')
+                .addFields(
+                    { name: '🖥️ Staging Windows Player Build', value: `\`${futureWin}\``, inline: false },
+                    { name: '🍎 Staging macOS Client Build', value: `\`${futureMac}\``, inline: false }
+                )
+                .setTimestamp()
+                .setFooter({ text: 'WEAO Next-Gen Build Sync' });
+
+            return processing.edit({ content: null, embeds: [futureEmbed], components: [] });
+        } catch (err) {
+            console.error(err);
+            return processing.edit("❌ Failed to communicate with next-gen deployment maps.");
         }
     }
 
@@ -460,7 +438,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'mutevc') {
-        if (!message.member.permissions.has(PermissionFlagsBits.MuteMembers)) return sendError(message, "Missing `Mute Members` flag.");
+        if (!message.member.permissions.has(PermissionFlagsBits.MuteMembers)) return sendError(message, "Missing \`Mute Members\` flag.");
         const target = message.mentions.members.first();
         if (!target) return sendError(message, "Tag a target member profile.");
         if (!target.voice.channel) return sendError(message, "User is not active in a Voice Channel.");
@@ -473,7 +451,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'deafen') {
-        if (!message.member.permissions.has(PermissionFlagsBits.DeafenMembers)) return sendError(message, "Missing `Deafen Members` flag.");
+        if (!message.member.permissions.has(PermissionFlagsBits.DeafenMembers)) return sendError(message, "Missing \`Deafen Members\` flag.");
         const target = message.mentions.members.first();
         if (!target) return sendError(message, "Tag a target member profile.");
         if (!target.voice.channel) return sendError(message, "User is not active in a Voice Channel.");
@@ -486,9 +464,9 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'role') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) return sendError(message, "Missing `Manage Roles` rights.");
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) return sendError(message, "Missing \`Manage Roles\` rights.");
         const target = message.mentions.members.first();
-        if (!target) return sendError(message, "Tag a user. Usage: `!role @user [Role Name/ID]`");
+        if (!target) return sendError(message, "Tag a user. Usage: \`!role @user [Role Name/ID]\`");
         
         const query = args.slice(1).join(" ");
         const role = message.guild.roles.cache.get(query) || message.guild.roles.cache.find(r => r.name.toLowerCase() === query.toLowerCase());
@@ -501,9 +479,9 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'unrole') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) return sendError(message, "Missing `Manage Roles` rights.");
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) return sendError(message, "Missing \`Manage Roles\` rights.");
         const target = message.mentions.members.first();
-        if (!target) return sendError(message, "Tag a user. Usage: `!unrole @user [Role Name/ID]`");
+        if (!target) return sendError(message, "Tag a user. Usage: \`!unrole @user [Role Name/ID]\`");
         
         const query = args.slice(1).join(" ");
         const role = message.guild.roles.cache.get(query) || message.guild.roles.cache.find(r => r.name.toLowerCase() === query.toLowerCase());
