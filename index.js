@@ -25,7 +25,6 @@ let versionConfig = {
     }
 };
 
-// Global Bot Version Constant
 const BOT_VERSION = '1.5.3'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
@@ -214,11 +213,7 @@ client.on('messageCreate', async (message) => {
                 `• \`currentver\` — Returns current versions for PC, Mac, Android & iOS with auto-updating download buttons.\n` +
                 `• \`downgrade\` — Returns previous production rollback builds for PC and Mac with tracking buttons.\n\n` +
                 `**Exploit Automation Tracking**\n` +
-                `• \`check [name]\` — Query structural exploit bypass signatures.\n` +
-                `• \`track-channel #chan\` — Register target channel for dynamic Roblox patches.\n` +
-                `• \`untrack-channel #chan\` — Revoke auto-updates from chosen target index.\n` +
-                `• \`sendlive-ver\` — Manually force evaluate production release updates.\n` +
-                `• \`sendbeta-ver\` — Manually force evaluate upcoming engineering changes.\n\n` +
+                `• \`check [name]\` — Query structural exploit bypass signatures and capabilities.\n\n` +
                 `**Punishments & Restraints**\n` +
                 `• \`kick / ban @user [reason]\` — Core member removal actions.\n` +
                 `• \`unban [id]\` — Clear target restrictions by identifier index.\n` +
@@ -332,56 +327,6 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    if (command === 'track-channel') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing `Manage Channels` permissions.");
-        const channel = message.mentions.channels.first();
-        if (!channel?.isTextBased()) return sendError(message, "Provide a valid text channel tag.");
-        
-        if (!versionConfig.channels) versionConfig.channels = [];
-        if (!versionConfig.channels.includes(channel.id)) {
-            versionConfig.channels.push(channel.id);
-            saveConfig();
-        }
-        return sendSuccess(message, `Channel ${channel} is now successfully bound to all automatic **Roblox Engine Patch updates**.`);
-    }
-
-    if (command === 'untrack-channel') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing `Manage Channels` permissions.");
-        const channel = message.mentions.channels.first();
-        if (!channel) return sendError(message, "Provide a valid channel tag.");
-        
-        if (!versionConfig.channels) versionConfig.channels = [];
-        const idx = versionConfig.channels.indexOf(channel.id);
-        if (idx === -1) return sendError(message, "That channel target isn't active in the updates database index.");
-        
-        versionConfig.channels.splice(idx, 1);
-        saveConfig();
-        return sendSuccess(message, `Successfully unlinked ${channel} from tracking configurations.`);
-    }
-
-    if (command === 'sendlive-ver') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing execution rights.");
-        const res = await fetch('https://weao.xyz/api/versions/current');
-        if (!res.ok) return sendError(message, "Target network endpoint failed.");
-        const data = await res.json();
-        const list = Array.isArray(data) ? data : [data];
-        const winObj = list.find(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
-        await dispatch1to1Embed('live', winObj?.version || 'N/A');
-        return sendSuccess(message, "Dispatched current Live version layout.");
-    }
-
-    if (command === 'sendbeta-ver') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing execution rights.");
-        const res = await fetch('https://weao.xyz/api/versions/future');
-        if (!res.ok) return sendError(message, "Target network endpoint failed.");
-        const data = await res.json();
-        const list = Array.isArray(data) ? data : [data];
-        const winObj = list.find(e => e.client?.toLowerCase() === 'windows' || e.platform?.toLowerCase() === 'windows');
-        await dispatch1to1Embed('beta', winObj?.version || 'N/A');
-        await dispatch1to1Embed('hidden', winObj?.hiddenVersion || 'N/A');
-        return sendSuccess(message, "Dispatched current Beta version layouts.");
-    }
-
     if (command === 'ping') {
         return message.reply({ embeds: [new EmbedBuilder().setColor(0x2ECC71).setTitle('🏓 Pong!').setDescription(`Latency: **${Date.now() - message.createdTimestamp}ms**\nAPI: **${Math.round(client.ws.ping)}ms**`)] });
     }
@@ -460,15 +405,44 @@ client.on('messageCreate', async (message) => {
             if (!matched) return processing.edit({ content: `Executor profile matching \`${query}\` not located.` });
             
             const isWorking = matched.updateStatus === true;
+            
+            const lastUpdatedRaw = matched.lastUpdated || new Date().toISOString();
+            const dateObj = new Date(lastUpdatedRaw);
+            const pad = (n) => String(n).padStart(2, '0');
+            const formattedDate = `${pad(dateObj.getUTCDate())}/${pad(dateObj.getUTCMonth() + 1)}/${dateObj.getUTCFullYear()} at ${pad(dateObj.getUTCHours())}:${pad(dateObj.getUTCMinutes())} ${dateObj.getUTCHours() >= 12 ? 'PM' : 'AM'} UTC`;
+
             const statusEmbed = new EmbedBuilder()
                 .setColor(isWorking ? 0x2ECC71 : 0xE74C3C)
                 .setTitle(matched.title)
-                .setDescription(`Updated: ${isWorking ? "✅" : "❌"}\nVersion: \`${matched.version || "N/A"}\`\n\n> ${matched.detected ? "⚠️ Detected in banwaves!" : "Normal footprint status."}`)
-                .setTimestamp();
+                .setDescription(
+                    `Updated ${isWorking ? "✅" : "❌"} - \`${matched.version || "1.0.0"}\` - **${matched.type || "Free"}** - ${matched.keySystem ? "Key System" : "Keyless"}\n` +
+                    `Last updated: ${formattedDate}\n\n` +
+                    `| ⚠️ ${matched.detected ? "Detected in banwaves, proceed with extreme caution." : "Footprint completely secure within default metrics."}`
+                )
+                .setFooter({ text: `Powered by weao.xyz • ${new Date().toLocaleDateString('en-US')} ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}` });
             
             if (EXECUTOR_IMAGES[query.toLowerCase()]) statusEmbed.setImage(EXECUTOR_IMAGES[query.toLowerCase()]);
-            return processing.edit({ content: null, embeds: [statusEmbed] });
-        } catch { return processing.edit("API communication breakdown mapping executor values."); }
+
+            const targetWebsite = matched.website || "https://weao.xyz";
+            const targetDiscord = matched.discord || "https://discord.gg";
+
+            const buttons = [
+                new ButtonBuilder().setLabel('Website').setStyle(ButtonStyle.Link).setURL(targetWebsite),
+                new ButtonBuilder().setLabel('Discord').setStyle(ButtonStyle.Link).setURL(targetDiscord)
+            ];
+
+            // If the exploit type matches "Paid", append the custom key acquisition endpoint
+            if (matched.type?.toLowerCase() === 'paid') {
+                buttons.push(new ButtonBuilder().setLabel('Get Key').setStyle(ButtonStyle.Link).setURL('https://rcheatz.com/'));
+            }
+
+            const linkRow = new ActionRowBuilder().addComponents(buttons);
+
+            return processing.edit({ content: null, embeds: [statusEmbed], components: [linkRow] });
+        } catch (err) { 
+            console.error(err);
+            return processing.edit("API communication breakdown mapping executor values."); 
+        }
     }
 
     if (command === 'botlogs') {
