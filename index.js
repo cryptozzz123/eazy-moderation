@@ -66,6 +66,7 @@ const globalBotLogs = [];
 const runningChatLogs = new Map();
 const cooldowns = new Collection();
 const afkUsers = new Map(); 
+const userWarnings = new Collection(); // Local warning tracker memory map
 const bootTime = Date.now();
 
 client.once('ready', () => {
@@ -261,11 +262,9 @@ client.on('messageCreate', async (message) => {
         
         try {
             if (!targetNick) {
-                // If no name specified, reset the user's nickname back to default
                 await target.setNickname(null);
                 return sendSuccess(message, `Successfully reset the nickname for **${target.user.tag}**.`);
             } else {
-                // Change nickname to the provided string argument
                 const truncatedNick = targetNick.slice(0, 32);
                 await target.setNickname(truncatedNick);
                 return sendSuccess(message, `Successfully updated **${target.user.tag}**'s nickname to \`${truncatedNick}\`.`);
@@ -288,7 +287,10 @@ client.on('messageCreate', async (message) => {
                 `• \`status\` — Multi-endpoint framework health check values.\n` +
                 `• \`help\` — Display this clean master systems guide.\n` +
                 `• \`botlogs\` — View last 10 commands parsed through memory.\n` +
-                `• \`afk [message]\` — Mark yourself away from keyboard with custom status messages.\n\n` +
+                `• \`afk [message]\` — Mark yourself away from keyboard with custom status messages.\n` +
+                `• \`userinfo [@user]\` — View a member's detail card.\n` +
+                `• \`serverinfo\` — View complete structural details of the server.\n` +
+                `• \`members\` — View total current users present inside the community footprint.\n\n` +
                 `**Roblox Version Engines**\n` +
                 `• \`currentver\` — Returns current versions for PC, Mac, Android & iOS with auto-updating download buttons.\n` +
                 `• \`downgrade\` — Returns previous production rollback builds for PC and Mac.\n` +
@@ -298,11 +300,13 @@ client.on('messageCreate', async (message) => {
                 `**Punishments & Restraints**\n` +
                 `• \`kick / ban @user [reason]\` — Core member removal actions.\n` +
                 `• \`unban [id]\` — Clear target restrictions by identifier index.\n` +
-                `• \`warn @user [reason]\` — Log structural behavioral adjustments.\n` +
+                `• \`warn @user [reason]\` — Log behaviors. Escalates automatically (4 warns = 24h timeout, 5 warns = Ban).\n` +
+                `• \`clearwarns @user\` — Clear warning counts for a user profile.\n` +
                 `• \`mute / unmute @user\` — Restrict messaging metrics securely.\n` +
                 `• \`nickname @user [name]\` — Force change or reset a server member's nickname display profile.\n\n` +
                 `**Channel Management Operations**\n` +
                 `• \`clear [1-100]\` — Clean clutter text blocks from channel flows.\n` +
+                `• \`slowmode [seconds] [channel]\` — Apply precise slowmode delays to specific channels.\n` +
                 `• \`lock / unlock\` — Toggle message writing rights instantly.\n` +
                 `• \`lockdown / unlockdown\` — Global server channel freezing arrays.\n` +
                 `• \`chatlogs @user\` — Review last 15 elements cached by user footprint.\n\n` +
@@ -492,11 +496,146 @@ client.on('messageCreate', async (message) => {
         }
     }
 
+    // --- !warn Command Integration (With Progressive Escalation Rules) ---
     if (command === 'warn') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ModerateMembers)) return sendError(message, "Missing rights.");
-        const target = message.mentions.users.first();
-        if (!target) return sendError(message, "Tag a user profile.");
-        return message.channel.send({ content: `${target}`, embeds: [new EmbedBuilder().setColor(0xE67E22).setTitle('⚠️ Structural Warning').setDescription(`**User:** ${target.tag}\n**Reason:** *${args.slice(1).join(" ") || "None"}*`)] });
+        if (!message.member.permissions.has(PermissionFlagsBits.ModerateMembers)) return sendError(message, "Missing structural permissions.");
+        
+        const targetMember = message.mentions.members.first();
+        if (!targetMember) return sendError(message, "Please tag a target profile. Usage: `!warn @user [reason]`");
+        if (targetMember.user.bot) return sendError(message, "Automated bot infrastructure cannot be processed with dynamic behavior warnings.");
+
+        const reason = args.slice(1).join(" ") || "No reason specified";
+        
+        // Track warnings inside collection array
+        let currentWarns = userWarnings.get(targetMember.id) || 0;
+        currentWarns++;
+        userWarnings.set(targetMember.id, currentWarns);
+
+        const warnEmbed = new EmbedBuilder()
+            .setColor(0xE67E22)
+            .setTitle('⚠️ Structural Warning Logged')
+            .setDescription(`**User:** ${targetMember.user.tag}\n**Total Warnings:** \`${currentWarns}/5\`\n**Reason:** *${reason}*`)
+            .setTimestamp();
+
+        await message.channel.send({ content: `${targetMember}`, embeds: [warnEmbed] });
+
+        // Action thresholds logic loop
+        if (currentWarns === 4) {
+            if (!targetMember.moderatable) return sendError(message, `Warning tracked (${currentWarns}), but hierarchy configurations prevent me from enforcing a timeout loop.`);
+            await targetMember.timeout(24 * 60 * 60 * 1000, `Automated Escalation: 4 active behavioral warnings parsed.`);
+            return sendSuccess(message, `User **${targetMember.user.tag}** reached **4 warnings** and has been timed out for 24 hours.`);
+        } else if (currentWarns >= 5) {
+            if (!targetMember.bannable) return sendError(message, `Warning tracked (${currentWarns}), but hierarchy configurations prevent me from executing a hard ban execution.`);
+            await targetMember.ban({ reason: `Automated Escalation: Warning threshold limit (5) breached.` });
+            return sendSuccess(message, `User **${targetMember.user.tag}** reached **5 warnings** and has been permanently banned.`);
+        }
+        return;
+    }
+
+    // --- !clearwarns Command ---
+    if (command === 'clearwarns') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ModerateMembers)) return sendError(message, "Missing structural permissions.");
+        
+        const targetMember = message.mentions.members.first();
+        if (!targetMember) return sendError(message, "Please tag a user profile. Usage: `!clearwarns @user`");
+        
+        if (!userWarnings.has(targetMember.id)) {
+            return sendError(message, `No behavioral records or warnings tracked for **${targetMember.user.tag}** inside active memory.`);
+        }
+
+        userWarnings.delete(targetMember.id);
+        return sendSuccess(message, `Successfully reset and cleared all warning track parameters for **${targetMember.user.tag}**.`);
+    }
+
+    // --- !slowmode Command Framework ---
+    if (command === 'slowmode') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing `Manage Channels` permission flags.");
+        
+        const seconds = parseInt(args[0]);
+        if (isNaN(seconds) || seconds < 0 || seconds > 21600) {
+            return sendError(message, "Provide a valid slowmode integer delay constraint between 0 (off) and 21600 seconds.");
+        }
+
+        // Handle structural target parsing loops for target channels or fallback to active context
+        const targetChannel = message.mentions.channels.first() || message.channel;
+        
+        if (!targetChannel.isTextBased()) {
+            return sendError(message, "Slowmode parameters can only be altered inside valid text channel environments.");
+        }
+
+        try {
+            await targetChannel.setRateLimitPerUser(seconds);
+            if (seconds === 0) {
+                return sendSuccess(message, `Disabled slowmode restrictions inside channel context ${targetChannel}.`);
+            } else {
+                return sendSuccess(message, `Successfully configured a **${seconds}s** slowmode array loop inside channel ${targetChannel}.`);
+            }
+        } catch (err) {
+            console.error(err);
+            return sendError(message, "An internal error prevented adjusting the rate limits on the channel asset.");
+        }
+    }
+
+    // --- !userinfo Command ---
+    if (command === 'userinfo') {
+        const targetMember = message.mentions.members.first() || message.member;
+        const rolesList = targetMember.roles.cache
+            .filter(r => r.id !== message.guild.id)
+            .map(r => r.toString())
+            .join(', ') || 'None';
+
+        const infoEmbed = new EmbedBuilder()
+            .setColor(0x3498DB)
+            .setTitle(`👤 Profile Metrics: ${targetMember.user.tag}`)
+            .setThumbnail(targetMember.user.displayAvatarURL({ dynamic: true }))
+            .addFields(
+                { name: 'ID Metric String', value: `\`${targetMember.id}\``, inline: true },
+                { name: 'Server Display Profile', value: `${targetMember.displayName}`, inline: true },
+                { name: 'Account Footprint Created', value: `<t:${Math.floor(targetMember.user.createdTimestamp / 1000)}:F>`, inline: false },
+                { name: 'Server Deployment Joined', value: `<t:${Math.floor(targetMember.joinedTimestamp / 1000)}:F>`, inline: false },
+                { name: `Assigned Role Assets (${targetMember.roles.cache.size - 1})`, value: rolesList, inline: false }
+            )
+            .setTimestamp();
+
+        return message.reply({ embeds: [infoEmbed] });
+    }
+
+    // --- !serverinfo Command ---
+    if (command === 'serverinfo') {
+        const guild = message.guild;
+        const totalMembers = guild.memberCount;
+        const textChannels = guild.channels.cache.filter(c => c.type === 0 || c.isTextBased()).size;
+        const voiceChannels = guild.channels.cache.filter(c => c.type === 2).size;
+
+        const serverEmbed = new EmbedBuilder()
+            .setColor(0x3498DB)
+            .setTitle(`🏰 Workspace Architecture: ${guild.name}`)
+            .setThumbnail(guild.iconURL({ dynamic: true }))
+            .addFields(
+                { name: 'Server Identification String', value: `\`${guild.id}\``, inline: true },
+                { name: 'Guild Authority Owner', value: `<@${guild.ownerId}>`, inline: true },
+                { name: 'Total Tracked Footprint', value: `\`${totalMembers}\` users`, inline: true },
+                { name: 'Text Channels Count', value: `\`${textChannels}\``, inline: true },
+                { name: 'Voice Channels Count', value: `\`${voiceChannels}\``, inline: true },
+                { name: 'Verification Layer Level', value: `\`${guild.verificationLevel}\``, inline: true },
+                { name: 'Workspace Created On', value: `<t:${Math.floor(guild.createdTimestamp / 1000)}:F>`, inline: false }
+            )
+            .setTimestamp();
+
+        return message.reply({ embeds: [serverEmbed] });
+    }
+
+    // --- !members Command ---
+    if (command === 'members') {
+        return message.reply({
+            embeds: [
+                new EmbedBuilder()
+                    .setColor(0x2ECC71)
+                    .setTitle('👥 Active Population Matrix')
+                    .setDescription(`There are currently **${message.guild.memberCount}** members interacting inside this server environment right now.`)
+                    .setTimestamp()
+            ]
+        });
     }
 
     if (command === 'check') {
