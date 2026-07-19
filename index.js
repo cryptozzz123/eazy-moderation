@@ -25,7 +25,7 @@ let versionConfig = {
     }
 };
 
-const BOT_VERSION = '1.6.0'; 
+const BOT_VERSION = '1.7.0'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -199,10 +199,13 @@ client.on('messageCreate', async (message) => {
     globalBotLogs.push({ user: message.author.tag, command: `${prefix}${command} ${args.join(" ")}`.trim(), timestamp: new Date().toLocaleTimeString() });
     if (globalBotLogs.length > 150) globalBotLogs.shift();
 
-    // --- !afk Command Framework ---
+    // --- !afk Command Framework (Fixed Stacking Bug) ---
     if (command === 'afk') {
         const afkReason = args.join(" ") || "Away from keyboard";
-        const oldNickname = message.member ? message.member.nickname : null;
+        
+        const oldNickname = afkUsers.has(message.author.id) 
+            ? afkUsers.get(message.author.id).oldDisplayName 
+            : (message.member ? message.member.nickname : null);
 
         afkUsers.set(message.author.id, {
             reason: afkReason,
@@ -210,12 +213,16 @@ client.on('messageCreate', async (message) => {
             timestamp: Date.now()
         });
 
-        const originalName = message.member ? message.member.displayName : message.author.username;
+        let baseName = message.member ? message.member.displayName : message.author.username;
+        if (baseName.startsWith('[ AFK ] ')) {
+            baseName = baseName.replace('[ AFK ] ', '');
+        }
+
         let changeStatusText = "";
 
         if (message.member && message.member.manageable) {
             try {
-                const truncatedNick = `[ AFK ] ${originalName}`.slice(0, 32);
+                const truncatedNick = `[ AFK ] ${baseName}`.slice(0, 32);
                 await message.member.setNickname(truncatedNick);
             } catch (err) {
                 changeStatusText = "\n*(Note: Could not alter server profile display structure due to hierarchy limits)*";
@@ -233,6 +240,40 @@ client.on('messageCreate', async (message) => {
                     .setTimestamp()
             ]
         });
+    }
+
+    // --- !nickname Command Framework ---
+    if (command === 'nickname' || command === 'nick') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageNicknames)) {
+            return sendError(message, "You require the `Manage Nicknames` permission to execute this command.");
+        }
+
+        const target = message.mentions.members.first();
+        if (!target) {
+            return sendError(message, "Please target a member. Usage: `!nickname @user [New Nickname]`");
+        }
+
+        if (!target.manageable) {
+            return sendError(message, "I do not have high enough hierarchy permissions to manage this user's nickname.");
+        }
+
+        const targetNick = args.slice(1).join(" ");
+        
+        try {
+            if (!targetNick) {
+                // If no name specified, reset the user's nickname back to default
+                await target.setNickname(null);
+                return sendSuccess(message, `Successfully reset the nickname for **${target.user.tag}**.`);
+            } else {
+                // Change nickname to the provided string argument
+                const truncatedNick = targetNick.slice(0, 32);
+                await target.setNickname(truncatedNick);
+                return sendSuccess(message, `Successfully updated **${target.user.tag}**'s nickname to \`${truncatedNick}\`.`);
+            }
+        } catch (err) {
+            console.error(err);
+            return sendError(message, "An internal error occurred while adjusting the user's nickname.");
+        }
     }
 
     if (command === 'help') {
@@ -258,7 +299,8 @@ client.on('messageCreate', async (message) => {
                 `• \`kick / ban @user [reason]\` — Core member removal actions.\n` +
                 `• \`unban [id]\` — Clear target restrictions by identifier index.\n` +
                 `• \`warn @user [reason]\` — Log structural behavioral adjustments.\n` +
-                `• \`mute / unmute @user\` — Restrict messaging metrics securely.\n\n` +
+                `• \`mute / unmute @user\` — Restrict messaging metrics securely.\n` +
+                `• \`nickname @user [name]\` — Force change or reset a server member's nickname display profile.\n\n` +
                 `**Channel Management Operations**\n` +
                 `• \`clear [1-100]\` — Clean clutter text blocks from channel flows.\n` +
                 `• \`lock / unlock\` — Toggle message writing rights instantly.\n` +
