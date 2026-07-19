@@ -25,7 +25,7 @@ let versionConfig = {
     }
 };
 
-const BOT_VERSION = '1.7.0'; 
+const BOT_VERSION = '1.8.1'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
