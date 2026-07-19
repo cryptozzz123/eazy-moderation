@@ -65,6 +65,7 @@ const EXECUTOR_IMAGES = {
 const globalBotLogs = [];
 const runningChatLogs = new Map();
 const cooldowns = new Collection();
+const afkUsers = new Map(); 
 const bootTime = Date.now();
 
 client.once('ready', () => {
@@ -131,19 +132,59 @@ async function dispatch1to1Embed(type, versionString) {
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
+    const prefix = '!';
+
+    // --- Automatic UNAFK Handling Logic ---
+    if (afkUsers.has(message.author.id) && !message.content.startsWith(`${prefix}afk`)) {
+        const afkData = afkUsers.get(message.author.id);
+        afkUsers.delete(message.author.id);
+
+        if (message.member && message.member.manageable) {
+            try {
+                await message.member.setNickname(afkData.oldDisplayName);
+            } catch (err) {
+                console.error("⚠️ Failed to revert nickname config:", err.message);
+            }
+        }
+
+        const welcomeBack = await message.channel.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setColor(0x2ECC71)
+                    .setDescription(`👋 Welcome back ${message.author}! I have removed your AFK status configuration layer.`)
+            ]
+        });
+        setTimeout(() => welcomeBack.delete().catch(() => {}), 5000);
+    }
+
+    // --- Dynamic Multi-User AFK Intercept Monitor ---
+    if (message.mentions.users.size > 0) {
+        message.mentions.users.forEach((user) => {
+            if (afkUsers.has(user.id)) {
+                const data = afkUsers.get(user.id);
+                message.reply({
+                    embeds: [
+                        new EmbedBuilder()
+                            .setColor(0xFFAA00)
+                            .setDescription(`💤 ${user} is currently AFK: **${data.reason}**`)
+                    ]
+                }).catch(() => {});
+            }
+        });
+    }
+
     if (!runningChatLogs.has(message.author.id)) runningChatLogs.set(message.author.id, []);
     const userLog = runningChatLogs.get(message.author.id);
     userLog.push({ content: message.content, channel: message.channel.name, timestamp: new Date().toLocaleTimeString() });
     if (userLog.length > 100) userLog.shift();
 
-    const prefix = '!';
     if (!message.content.startsWith(prefix)) return;
 
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    const sendError = (msg, text) => msg.reply({ embeds: [new EmbedBuilder().setColor(0xFF3333).setDescription(`❌ ${text}`)] });
-    const sendSuccess = (msg, text) => msg.reply({ embeds: [new EmbedBuilder().setColor(0x2ECC71).setDescription(`✅ ${text}`)] });
+    const sendError = (msg, text) => msg.reply({ embeds: [new EmbedBuilder().setColor(0xFF3333).setDescription(`❌ ${text}`)] }).catch(() => {});
+    const sendSuccess = (msg, text) => msg.reply({ embeds: [new EmbedBuilder().setColor(0x2ECC71).setDescription(`✅ ${text}`)] }).catch(() => {});
 
     const now = Date.now();
     const cooldownAmount = 2 * 1000;
@@ -155,8 +196,44 @@ client.on('messageCreate', async (message) => {
     }
     timestamps.set(message.author.id, now);
 
-    globalBotLogs.push({ user: message.author.tag, command: `!${command} ${args.join(" ")}`.trim(), timestamp: new Date().toLocaleTimeString() });
+    globalBotLogs.push({ user: message.author.tag, command: `${prefix}${command} ${args.join(" ")}`.trim(), timestamp: new Date().toLocaleTimeString() });
     if (globalBotLogs.length > 150) globalBotLogs.shift();
+
+    // --- !afk Command Framework ---
+    if (command === 'afk') {
+        const afkReason = args.join(" ") || "Away from keyboard";
+        const oldNickname = message.member ? message.member.nickname : null;
+
+        afkUsers.set(message.author.id, {
+            reason: afkReason,
+            oldDisplayName: oldNickname,
+            timestamp: Date.now()
+        });
+
+        const originalName = message.member ? message.member.displayName : message.author.username;
+        let changeStatusText = "";
+
+        if (message.member && message.member.manageable) {
+            try {
+                const truncatedNick = `[ AFK ] ${originalName}`.slice(0, 32);
+                await message.member.setNickname(truncatedNick);
+            } catch (err) {
+                changeStatusText = "\n*(Note: Could not alter server profile display structure due to hierarchy limits)*";
+            }
+        } else {
+            changeStatusText = "\n*(Note: Missing permissions context to modify this specific profile name)*";
+        }
+
+        return message.reply({
+            embeds: [
+                new EmbedBuilder()
+                    .setColor(0x3498DB)
+                    .setTitle('💤 AFK Status Enabled')
+                    .setDescription(`I have set your status to AFK.\n\n**Reason:** *${afkReason}*${changeStatusText}`)
+                    .setTimestamp()
+            ]
+        });
+    }
 
     if (command === 'help') {
         const cmdsEmbed = new EmbedBuilder()
@@ -169,7 +246,8 @@ client.on('messageCreate', async (message) => {
                 `• \`version\` — Return system architecture build strings.\n` +
                 `• \`status\` — Multi-endpoint framework health check values.\n` +
                 `• \`help\` — Display this clean master systems guide.\n` +
-                `• \`botlogs\` — View last 10 commands parsed through memory.\n\n` +
+                `• \`botlogs\` — View last 10 commands parsed through memory.\n` +
+                `• \`afk [message]\` — Mark yourself away from keyboard with custom status messages.\n\n` +
                 `**Roblox Version Engines**\n` +
                 `• \`currentver\` — Returns current versions for PC, Mac, Android & iOS with auto-updating download buttons.\n` +
                 `• \`downgrade\` — Returns previous production rollback builds for PC and Mac.\n` +
@@ -316,7 +394,8 @@ client.on('messageCreate', async (message) => {
     if (command === 'kick') {
         if (!message.member.permissions.has(PermissionFlagsBits.KickMembers)) return sendError(message, "Missing `Kick Members` permission.");
         const target = message.mentions.members.first();
-        if (!target?.kickable) return sendError(message, "Cannot kick this profile target.");
+        if (!target) return sendError(message, "Please target a member to kick.");
+        if (!target.kickable) return sendError(message, "Cannot kick this profile target due to role hierarchies.");
         const reason = args.slice(1).join(" ") || "None specified";
         await target.kick(reason);
         return message.reply({ embeds: [new EmbedBuilder().setColor(0xE74C3C).setTitle('👢 Member Kicked').setDescription(`**User:** ${target.user.tag}\n**Reason:** *${reason}*`)] });
@@ -325,28 +404,29 @@ client.on('messageCreate', async (message) => {
     if (command === 'ban') {
         if (!message.member.permissions.has(PermissionFlagsBits.BanMembers)) return sendError(message, "Missing `Ban Members` permission.");
         const target = message.mentions.members.first();
-        if (!target?.bannable) return sendError(message, "Cannot ban this profile target.");
+        if (!target) return sendError(message, "Please target a member to ban.");
+        if (!target.bannable) return sendError(message, "Cannot ban this profile target due to role hierarchies.");
         const reason = args.slice(1).join(" ") || "None specified";
         await target.ban({ reason });
         return message.reply({ embeds: [new EmbedBuilder().setColor(0x992D22).setTitle('⛔ Member Banned').setDescription(`**User:** ${target.user.tag}\n**Reason:** *${reason}*`)] });
     }
 
     if (command === 'unban') {
-        if (!message.member.permissions.has(PermissionFlagsBits.BanMembers)) return sendError(message, "Missing permission.");
+        if (!message.member.permissions.has(PermissionFlagsBits.BanMembers)) return sendError(message, "Missing permissions.");
         const targetId = args[0];
         if (!targetId) return sendError(message, "Provide a valid User ID string.");
         try {
             await message.guild.members.unban(targetId);
-            return sendSuccess(message, `Ban configuration index revoked for **${targetId}**.`);
-        } catch { return sendError(message, "Failed to resolve unban lookup target."); }
+            return sendSuccess(message, `Ban configuration index revoked for ID: **${targetId}**.`);
+        } catch { return sendError(message, "Failed to find or resolve unban lookup target."); }
     }
 
     if (command === 'mute') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ModerateMembers)) return sendError(message, "Missing rights.");
+        if (!message.member.permissions.has(PermissionFlagsBits.ModerateMembers)) return sendError(message, "Missing permissions.");
         const target = message.mentions.members.first();
         if (!target) return sendError(message, "Tag a user profile.");
         await target.timeout(24 * 60 * 60 * 1000, args.slice(1).join(" ") || "No details provided");
-        return sendSuccess(message, `Timed out user **${target.user.tag}**.`);
+        return sendSuccess(message, `Timed out user **${target.user.tag}** for 24 hours.`);
     }
 
     if (command === 'unmute') {
@@ -361,8 +441,13 @@ client.on('messageCreate', async (message) => {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageMessages)) return sendError(message, "Missing rights.");
         const amount = parseInt(args[0]);
         if (isNaN(amount) || amount < 1 || amount > 100) return sendError(message, "Provide clear value between 1 and 100.");
-        await message.channel.bulkDelete(amount + 1, true);
-        return message.channel.send("🧹 **Chat Cleaned!**").then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
+        
+        try {
+            await message.channel.bulkDelete(amount + 1, true);
+            return message.channel.send("🧹 **Chat Cleaned!**").then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
+        } catch (err) {
+            return sendError(message, "Cannot delete messages older than 14 days due to Discord platform limits.");
+        }
     }
 
     if (command === 'warn') {
@@ -375,7 +460,7 @@ client.on('messageCreate', async (message) => {
     if (command === 'check') {
         const query = args.join(" ");
         if (!query) return sendError(message, "Provide an executor string.");
-        const processing = await message.reply("Checking..");
+        const processing = await message.reply("Checking API registry entries...");
         try {
             const response = await fetch('https://weao.xyz/api/status/exploits');
             const list = await response.json();
@@ -469,6 +554,7 @@ client.on('messageCreate', async (message) => {
         if (!target) return sendError(message, "Tag a user. Usage: \`!role @user [Role Name/ID]\`");
         
         const query = args.slice(1).join(" ");
+        if (!query) return sendError(message, "Please provide a valid Role name or explicit ID string.");
         const role = message.guild.roles.cache.get(query) || message.guild.roles.cache.find(r => r.name.toLowerCase() === query.toLowerCase());
         
         if (!role) return sendError(message, "Role not found inside server databases.");
@@ -484,6 +570,7 @@ client.on('messageCreate', async (message) => {
         if (!target) return sendError(message, "Tag a user. Usage: \`!unrole @user [Role Name/ID]\`");
         
         const query = args.slice(1).join(" ");
+        if (!query) return sendError(message, "Please provide a valid Role name or explicit ID string.");
         const role = message.guild.roles.cache.get(query) || message.guild.roles.cache.find(r => r.name.toLowerCase() === query.toLowerCase());
         
         if (!role) return sendError(message, "Role not found inside server databases.");
