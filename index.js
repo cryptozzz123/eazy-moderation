@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, PermissionFlagsBits, EmbedBuilder, Collection, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionFlagsBits, EmbedBuilder, Collection, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -18,8 +18,8 @@ const CONFIG_PATH = path.join(__dirname, 'version_config.json');
 
 let versionConfig = {
     channels: [], 
-    statusVCs: { crashy: null, eazy: null }, // Live status voice channel tracks
-    maintenanceMode: false,                  // Global maintenance flag state
+    statusVCs: { crashy: null, eazy: null }, // Stores the auto-created VC IDs
+    maintenanceMode: false,                  
     lastVersions: {
         live: {},
         beta: {},
@@ -27,7 +27,7 @@ let versionConfig = {
     }
 };
 
-const BOT_VERSION = '1.8.2'; 
+const BOT_VERSION = '1.8.3'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -68,12 +68,11 @@ const globalBotLogs = [];
 const runningChatLogs = new Map();
 const cooldowns = new Collection();
 const afkUsers = new Map(); 
-const userWarnings = new Collection(); // Structural Warning Storage Array Map
+const userWarnings = new Collection(); 
 const bootTime = Date.now();
 
 client.once('ready', () => {
-    console.log(`🚀 Success! Eazy Moderation loaded as ${client.user.tag}`);
-    // Check Roblox and update VC names every 60 seconds
+    console.log(`🚀 Success! Eazy Moderation loaded as ${client.user.tag} [v${BOT_VERSION}]`);
     setInterval(() => {
         checkRobloxVersions();
         updateStatusVoiceChannels();
@@ -82,12 +81,11 @@ client.once('ready', () => {
     updateStatusVoiceChannels();
 });
 
-// Structural worker to update VC names dynamically matching status changes
+// Auto-updates channel names dynamically based on live status
 async function updateStatusVoiceChannels() {
     if (!client.guilds.cache.first()) return;
     const defaultGuild = client.guilds.cache.first();
 
-    // 1. Calculate Eazy Moderation status values
     let eazyText = "Eazy Moderation : Working 🟢";
     if (versionConfig.maintenanceMode) {
         eazyText = "Eazy Moderation : Maintenance 🟠";
@@ -95,7 +93,6 @@ async function updateStatusVoiceChannels() {
         eazyText = "Eazy Moderation : Down 🔴";
     }
 
-    // 2. Calculate crashy status values
     let crashyText = "crashy : Down 🔴";
     try {
         const crashyMember = await defaultGuild.members.fetch('1512062436411183114').catch(() => null);
@@ -104,7 +101,6 @@ async function updateStatusVoiceChannels() {
         }
     } catch {}
 
-    // 3. Dispatch updates to Discord API endpoints if configured
     if (versionConfig.statusVCs?.eazy) {
         const chan = await client.channels.fetch(versionConfig.statusVCs.eazy).catch(() => null);
         if (chan && chan.name !== eazyText) await chan.setName(eazyText).catch(() => {});
@@ -175,7 +171,7 @@ client.on('messageCreate', async (message) => {
 
     const prefix = '!';
 
-    // --- Automatic UNAFK Handling Logic ---
+    // --- Automatic UNAFK Handling ---
     if (afkUsers.has(message.author.id) && !message.content.startsWith(`${prefix}afk`)) {
         const afkData = afkUsers.get(message.author.id);
         afkUsers.delete(message.author.id);
@@ -184,7 +180,7 @@ client.on('messageCreate', async (message) => {
             try {
                 await message.member.setNickname(afkData.oldDisplayName);
             } catch (err) {
-                console.error("⚠️ Failed to revert nickname config:", err.message);
+                console.error("⚠️ Failed to revert nickname:", err.message);
             }
         }
 
@@ -192,7 +188,7 @@ client.on('messageCreate', async (message) => {
             embeds: [
                 new EmbedBuilder()
                     .setColor(0x2ECC71)
-                    .setDescription(`👋 Welcome back ${message.author}! I have removed your AFK status configuration layer.`)
+                    .setDescription(`👋 Welcome back ${message.author}! I have removed your AFK status.`)
             ]
         });
         setTimeout(() => welcomeBack.delete().catch(() => {}), 5000);
@@ -240,72 +236,81 @@ client.on('messageCreate', async (message) => {
     globalBotLogs.push({ user: message.author.tag, command: `${prefix}${command} ${args.join(" ")}`.trim(), timestamp: new Date().toLocaleTimeString() });
     if (globalBotLogs.length > 150) globalBotLogs.shift();
 
-    // --- !maintenance Command Framework (Targeted Ping Enforcement) ---
+    // --- !maintenance Command Framework ---
     if (command === 'maintenance') {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return sendError(message, "Requires administrative privileges to execute maintenance switches.");
+            return sendError(message, "You need Administrator permissions to run this command.");
         }
 
         const botMention = message.mentions.users.first();
         if (!botMention || botMention.id !== client.user.id) {
-            return sendError(message, "Execution target missing. Usage: `!maintenance @bot [true/false]`");
+            return sendError(message, "You must ping the bot. Usage: `!maintenance @bot [true/false]`");
         }
 
         const valueParam = args[1]?.toLowerCase();
         if (valueParam !== 'true' && valueParam !== 'false') {
-            return sendError(message, "Invalid parameter specification. Define state as either `true` or `false`.");
+            return sendError(message, "Invalid setting. Please use either `true` or `false`.");
         }
 
         if (valueParam === 'true') {
             versionConfig.maintenanceMode = true;
             saveConfig();
             await updateStatusVoiceChannels();
-            return sendSuccess(message, "System configuration toggled to **Maintenance** framework state.");
+            return sendSuccess(message, "Bot status switched to **Maintenance 🟠**.");
         } else {
             versionConfig.maintenanceMode = false;
             saveConfig();
             await updateStatusVoiceChannels();
-            return sendSuccess(message, "System configuration returned to standard active production framework status.");
+            return sendSuccess(message, "Bot status returned to **Working 🟢**.");
         }
     }
 
-    // --- !statusvc Command Framework ---
+    // --- !statusvc Command (Creates Voice Channels Directly Without Category) ---
     if (command === 'statusvc') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
-            return sendError(message, "Missing `Manage Channels` permission contexts.");
-        }
-
-        const typeSelector = args[0]?.toLowerCase(); // 'crashy' or 'eazy'
-        const vcTarget = message.mentions.channels.first();
-
-        if (!typeSelector || (typeSelector !== 'crashy' && typeSelector !== 'eazy') || !vcTarget) {
-            return sendError(message, "Syntax pattern invalid. Usage: `!statusvc [crashy/eazy] #VoiceChannel`");
-        }
-
-        if (vcTarget.type !== 2) {
-            return sendError(message, "Selected target route must point to a valid audio voice channel module.");
+            return sendError(message, "You need the `Manage Channels` permission to run this command.");
         }
 
         try {
-            // Apply secure locks preventing connections from the @everyone profile footprint
-            await vcTarget.permissionOverwrites.edit(message.guild.roles.everyone, { Connect: false });
-            
-            if (typeSelector === 'eazy') {
-                versionConfig.statusVCs.eazy = vcTarget.id;
-            } else {
-                versionConfig.statusVCs.crashy = vcTarget.id;
-            }
+            const guild = message.guild;
 
+            // Setup the lock configurations so users cannot join
+            const channelPermissions = [
+                {
+                    id: guild.roles.everyone.id,
+                    deny: [PermissionFlagsBits.Connect],
+                    allow: [PermissionFlagsBits.ViewChannel]
+                }
+            ];
+
+            // Create the channels straight into the server channel tree
+            const crashyVC = await guild.channels.create({
+                name: 'crashy : Working 🟢',
+                type: ChannelType.GuildVoice,
+                permissionOverwrites: channelPermissions
+            });
+
+            const eazyVC = await guild.channels.create({
+                name: 'Eazy Moderation : Working 🟢',
+                type: ChannelType.GuildVoice,
+                permissionOverwrites: channelPermissions
+            });
+
+            // Save configuration references
+            versionConfig.statusVCs.crashy = crashyVC.id;
+            versionConfig.statusVCs.eazy = eazyVC.id;
             saveConfig();
+
             await updateStatusVoiceChannels();
-            return sendSuccess(message, `Bound **${typeSelector}** monitoring track to voice context ${vcTarget} securely.`);
+
+            return sendSuccess(message, "Successfully created locked status channels directly in the server list!");
         } catch (err) {
             console.error(err);
-            return sendError(message, "Internal failure trying to configure target channel permission locks.");
+            return sendError(message, "Failed to create status channels. Check my server permissions hierarchy.");
         }
     }
 
-    // --- !afk Command Framework (Fixed Stacking Bug) ---
+    // --- !afk Command Framework ---
     if (command === 'afk') {
         const afkReason = args.join(" ") || "Away from keyboard";
         
@@ -402,7 +407,7 @@ client.on('messageCreate', async (message) => {
                 `• \`futurever\` — Query upcoming deployment configurations.\n\n` +
                 `**Exploit Automation Tracking & VCs**\n` +
                 `• \`check [name]\` — Query structural exploit bypass signatures.\n` +
-                `• \`statusvc [crashy/eazy] #channel\` — Bind automatically locked tracking text lines into targeted voice channels.\n` +
+                `• \`statusvc\` — Automatically setup channels layout to track bot status.\n` +
                 `• \`maintenance @bot [true/false]\` — Toggle bot tracking state indicators to Maintenance mode.\n\n` +
                 `**Punishments & Restraints**\n` +
                 `• \`kick / ban @user [reason]\` — Core member removal actions.\n` +
@@ -546,7 +551,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'kick') {
-        if (!message.member.permissions.has(PermissionFlagsBits.KickMembers)) return sendError(message, "Missing `Kick Members` permission.");
+        if (!message.member.permissions.has(PermissionFlagsBits.KickMembers)) return sendError(message, "Missing \`Kick Members\` permission.");
         const target = message.mentions.members.first();
         if (!target) return sendError(message, "Please target a member to kick.");
         if (!target.kickable) return sendError(message, "Cannot kick this profile target due to role hierarchies.");
@@ -556,7 +561,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'ban') {
-        if (!message.member.permissions.has(PermissionFlagsBits.BanMembers)) return sendError(message, "Missing `Ban Members` permission.");
+        if (!message.member.permissions.has(PermissionFlagsBits.BanMembers)) return sendError(message, "Missing \`Ban Members\` permission.");
         const target = message.mentions.members.first();
         if (!target) return sendError(message, "Please target a member to ban.");
         if (!target.bannable) return sendError(message, "Cannot ban this profile target due to role hierarchies.");
@@ -604,7 +609,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- !warn Command Integration (With Progressive Escalation Rules) ---
+    // --- !warn Command Integration ---
     if (command === 'warn') {
         if (!message.member.permissions.has(PermissionFlagsBits.ModerateMembers)) return sendError(message, "Missing structural permissions.");
         
@@ -633,13 +638,12 @@ client.on('messageCreate', async (message) => {
 
         await message.channel.send({ content: `${targetMember}`, embeds: [warnEmbed] });
 
-        // Action thresholds logic loop
         if (currentWarns === 4) {
             if (!targetMember.moderatable) return sendError(message, `Warning tracked (${currentWarns}), but hierarchy configurations prevent me from enforcing a timeout loop.`);
-            await targetMember.timeout(24 * 60 * 60 * 1000, `Automated Escalation: 4 active behavioral warnings parsed.`);
+            await targetMember.timeout(24 * 60 * 60 * 1000, `Automated Escalation: 4 active warnings parsed.`);
             return sendSuccess(message, `User **${targetMember.user.tag}** reached **4 warnings** and has been timed out for 24 hours.`);
         } else if (currentWarns >= 5) {
-            if (!targetMember.bannable) return sendError(message, `Warning tracked (${currentWarns}), but hierarchy configurations prevent me from executing a hard ban execution.`);
+            if (!targetMember.bannable) return sendError(message, `Warning tracked (${currentWarns}), but hierarchy configurations prevent me from executing a ban.`);
             await targetMember.ban({ reason: `Automated Escalation: Warning threshold limit (5) breached.` });
             return sendSuccess(message, `User **${targetMember.user.tag}** reached **5 warnings** and has been permanently banned.`);
         }
@@ -666,7 +670,7 @@ client.on('messageCreate', async (message) => {
         const historyEmbed = new EmbedBuilder()
             .setColor(0xF39C12)
             .setTitle(`📋 Warnings Audit Profile: ${targetMember.user.tag}`)
-            .setDescription(`Total Warning Constraints Active: \`${logs.length}/5\`\n\n${historyText}`)
+            .setDescription(`Total Warnings: \`${logs.length}/5\`\n\n${historyText}`)
             .setTimestamp();
 
         return message.reply({ embeds: [historyEmbed] });
@@ -680,20 +684,20 @@ client.on('messageCreate', async (message) => {
         if (!targetMember) return sendError(message, "Please tag a user profile. Usage: `!clearwarns @user`");
         
         if (!userWarnings.has(targetMember.id)) {
-            return sendError(message, `No behavioral records or warnings tracked for **${targetMember.user.tag}** inside active memory.`);
+            return sendError(message, `No behavioral records tracked for **${targetMember.user.tag}**.`);
         }
 
         userWarnings.delete(targetMember.id);
-        return sendSuccess(message, `Successfully reset and cleared all warning track parameters for **${targetMember.user.tag}**.`);
+        return sendSuccess(message, `Successfully reset and cleared warnings for **${targetMember.user.tag}**.`);
     }
 
     // --- !slowmode Command Framework ---
     if (command === 'slowmode') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing `Manage Channels` permission flags.");
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing \`Manage Channels\` permission flags.");
         
         const seconds = parseInt(args[0]);
         if (isNaN(seconds) || seconds < 0 || seconds > 21600) {
-            return sendError(message, "Provide a valid slowmode integer delay constraint between 0 (off) and 21600 seconds.");
+            return sendError(message, "Provide a valid slowmode integer constraint between 0 and 21600 seconds.");
         }
 
         const targetChannel = message.mentions.channels.first() || message.channel;
@@ -707,11 +711,11 @@ client.on('messageCreate', async (message) => {
             if (seconds === 0) {
                 return sendSuccess(message, `Disabled slowmode restrictions inside channel context ${targetChannel}.`);
             } else {
-                return sendSuccess(message, `Successfully configured a **${seconds}s** slowmode array loop inside channel ${targetChannel}.`);
+                return sendSuccess(message, `Successfully configured a **${seconds}s** slowmode loop inside channel ${targetChannel}.`);
             }
         } catch (err) {
             console.error(err);
-            return sendError(message, "An internal error prevented adjusting the rate limits on the channel asset.");
+            return sendError(message, "An error prevented adjusting the rate limits.");
         }
     }
 
@@ -852,7 +856,7 @@ client.on('messageCreate', async (message) => {
             const state = target.voice.serverMute;
             await target.voice.setMute(!state);
             return message.reply(`🎤 **Voice State:** Set server voice mute to **${!state}** for **${target.user.tag}**.`);
-        } catch { return sendError(message, "Failed to modify voice state layout flags."); }
+        } catch { return sendError(message, "Failed to modify voice state flags."); }
     }
 
     if (command === 'deafen') {
@@ -865,7 +869,7 @@ client.on('messageCreate', async (message) => {
             const state = target.voice.serverDeafen;
             await target.voice.setDeafen(!state);
             return message.reply(`🎧 **Voice State:** Set server voice deafen to **${!state}** for **${target.user.tag}**.`);
-        } catch { return sendError(message, "Failed to modify voice state layout flags."); }
+        } catch { return sendError(message, "Failed to modify voice state flags."); }
     }
 
     if (command === 'role') {
@@ -874,11 +878,11 @@ client.on('messageCreate', async (message) => {
         if (!target) return sendError(message, "Tag a user. Usage: \`!role @user [Role Name/ID]\`");
         
         const query = args.slice(1).join(" ");
-        if (!query) return sendError(message, "Please provide a valid Role name or explicit ID string.");
+        if (!query) return sendError(message, "Please provide a valid Role name or ID.");
         const role = message.guild.roles.cache.get(query) || message.guild.roles.cache.find(r => r.name.toLowerCase() === query.toLowerCase());
         
         if (!role) return sendError(message, "Role not found inside server databases.");
-        if (role.position >= message.guild.members.me.roles.highest.position) return sendError(message, "Target role sits higher than my position index.");
+        if (role.position >= message.guild.members.me.roles.highest.position) return sendError(message, "Target role sits higher than my position.");
         
         await target.roles.add(role);
         return sendSuccess(message, `Assigned role **${role.name}** to **${target.user.tag}**.`);
@@ -890,11 +894,11 @@ client.on('messageCreate', async (message) => {
         if (!target) return sendError(message, "Tag a user. Usage: \`!unrole @user [Role Name/ID]\`");
         
         const query = args.slice(1).join(" ");
-        if (!query) return sendError(message, "Please provide a valid Role name or explicit ID string.");
+        if (!query) return sendError(message, "Please provide a valid Role name or ID.");
         const role = message.guild.roles.cache.get(query) || message.guild.roles.cache.find(r => r.name.toLowerCase() === query.toLowerCase());
         
         if (!role) return sendError(message, "Role not found inside server databases.");
-        if (role.position >= message.guild.members.me.roles.highest.position) return sendError(message, "Target role sits higher than my position index.");
+        if (role.position >= message.guild.members.me.roles.highest.position) return sendError(message, "Target role sits higher than my position.");
         
         await target.roles.remove(role);
         return sendSuccess(message, `Stripped role **${role.name}** from **${target.user.tag}**.`);
