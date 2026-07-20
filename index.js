@@ -18,6 +18,8 @@ const CONFIG_PATH = path.join(__dirname, 'version_config.json');
 
 let versionConfig = {
     channels: [], 
+    statusVCs: { crashy: null, eazy: null }, // Live status voice channel tracks
+    maintenanceMode: false,                  // Global maintenance flag state
     lastVersions: {
         live: {},
         beta: {},
@@ -25,7 +27,7 @@ let versionConfig = {
     }
 };
 
-const BOT_VERSION = '1.8.1'; 
+const BOT_VERSION = '1.8.2'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -66,14 +68,52 @@ const globalBotLogs = [];
 const runningChatLogs = new Map();
 const cooldowns = new Collection();
 const afkUsers = new Map(); 
-const userWarnings = new Collection(); // Local warning tracker memory map
+const userWarnings = new Collection(); // Structural Warning Storage Array Map
 const bootTime = Date.now();
 
 client.once('ready', () => {
     console.log(`🚀 Success! Eazy Moderation loaded as ${client.user.tag}`);
-    setInterval(checkRobloxVersions, 60000);
+    // Check Roblox and update VC names every 60 seconds
+    setInterval(() => {
+        checkRobloxVersions();
+        updateStatusVoiceChannels();
+    }, 60000);
     checkRobloxVersions();
+    updateStatusVoiceChannels();
 });
+
+// Structural worker to update VC names dynamically matching status changes
+async function updateStatusVoiceChannels() {
+    if (!client.guilds.cache.first()) return;
+    const defaultGuild = client.guilds.cache.first();
+
+    // 1. Calculate Eazy Moderation status values
+    let eazyText = "Eazy Moderation : Working 🟢";
+    if (versionConfig.maintenanceMode) {
+        eazyText = "Eazy Moderation : Maintenance 🟠";
+    } else if (client.ws.ping <= 0 || client.ws.ping > 1200) {
+        eazyText = "Eazy Moderation : Down 🔴";
+    }
+
+    // 2. Calculate crashy status values
+    let crashyText = "crashy : Down 🔴";
+    try {
+        const crashyMember = await defaultGuild.members.fetch('1512062436411183114').catch(() => null);
+        if (crashyMember?.presence?.status && crashyMember.presence.status !== 'offline') {
+            crashyText = "crashy : Working 🟢";
+        }
+    } catch {}
+
+    // 3. Dispatch updates to Discord API endpoints if configured
+    if (versionConfig.statusVCs?.eazy) {
+        const chan = await client.channels.fetch(versionConfig.statusVCs.eazy).catch(() => null);
+        if (chan && chan.name !== eazyText) await chan.setName(eazyText).catch(() => {});
+    }
+    if (versionConfig.statusVCs?.crashy) {
+        const chan = await client.channels.fetch(versionConfig.statusVCs.crashy).catch(() => null);
+        if (chan && chan.name !== crashyText) await chan.setName(crashyText).catch(() => {});
+    }
+}
 
 async function checkRobloxVersions() {
     if (!versionConfig.channels || versionConfig.channels.length === 0) return;
@@ -200,6 +240,71 @@ client.on('messageCreate', async (message) => {
     globalBotLogs.push({ user: message.author.tag, command: `${prefix}${command} ${args.join(" ")}`.trim(), timestamp: new Date().toLocaleTimeString() });
     if (globalBotLogs.length > 150) globalBotLogs.shift();
 
+    // --- !maintenance Command Framework (Targeted Ping Enforcement) ---
+    if (command === 'maintenance') {
+        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return sendError(message, "Requires administrative privileges to execute maintenance switches.");
+        }
+
+        const botMention = message.mentions.users.first();
+        if (!botMention || botMention.id !== client.user.id) {
+            return sendError(message, "Execution target missing. Usage: `!maintenance @bot [true/false]`");
+        }
+
+        const valueParam = args[1]?.toLowerCase();
+        if (valueParam !== 'true' && valueParam !== 'false') {
+            return sendError(message, "Invalid parameter specification. Define state as either `true` or `false`.");
+        }
+
+        if (valueParam === 'true') {
+            versionConfig.maintenanceMode = true;
+            saveConfig();
+            await updateStatusVoiceChannels();
+            return sendSuccess(message, "System configuration toggled to **Maintenance** framework state.");
+        } else {
+            versionConfig.maintenanceMode = false;
+            saveConfig();
+            await updateStatusVoiceChannels();
+            return sendSuccess(message, "System configuration returned to standard active production framework status.");
+        }
+    }
+
+    // --- !statusvc Command Framework ---
+    if (command === 'statusvc') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return sendError(message, "Missing `Manage Channels` permission contexts.");
+        }
+
+        const typeSelector = args[0]?.toLowerCase(); // 'crashy' or 'eazy'
+        const vcTarget = message.mentions.channels.first();
+
+        if (!typeSelector || (typeSelector !== 'crashy' && typeSelector !== 'eazy') || !vcTarget) {
+            return sendError(message, "Syntax pattern invalid. Usage: `!statusvc [crashy/eazy] #VoiceChannel`");
+        }
+
+        if (vcTarget.type !== 2) {
+            return sendError(message, "Selected target route must point to a valid audio voice channel module.");
+        }
+
+        try {
+            // Apply secure locks preventing connections from the @everyone profile footprint
+            await vcTarget.permissionOverwrites.edit(message.guild.roles.everyone, { Connect: false });
+            
+            if (typeSelector === 'eazy') {
+                versionConfig.statusVCs.eazy = vcTarget.id;
+            } else {
+                versionConfig.statusVCs.crashy = vcTarget.id;
+            }
+
+            saveConfig();
+            await updateStatusVoiceChannels();
+            return sendSuccess(message, `Bound **${typeSelector}** monitoring track to voice context ${vcTarget} securely.`);
+        } catch (err) {
+            console.error(err);
+            return sendError(message, "Internal failure trying to configure target channel permission locks.");
+        }
+    }
+
     // --- !afk Command Framework (Fixed Stacking Bug) ---
     if (command === 'afk') {
         const afkReason = args.join(" ") || "Away from keyboard";
@@ -292,21 +397,24 @@ client.on('messageCreate', async (message) => {
                 `• \`serverinfo\` — View complete structural details of the server.\n` +
                 `• \`members\` — View total current users present inside the community footprint.\n\n` +
                 `**Roblox Version Engines**\n` +
-                `• \`currentver\` — Returns current versions for PC, Mac, Android & iOS with auto-updating download buttons.\n` +
-                `• \`downgrade\` — Returns previous production rollback builds for PC and Mac.\n` +
-                `• \`futurever\` — Query upcoming deployment configurations tracked inside staging history.\n\n` +
-                `**Exploit Automation Tracking**\n` +
-                `• \`check [name]\` — Query structural exploit bypass signatures and capabilities.\n\n` +
+                `• \`currentver\` — Returns current versions with auto-updating download buttons.\n` +
+                `• \`downgrade\` — Returns previous production rollback builds.\n` +
+                `• \`futurever\` — Query upcoming deployment configurations.\n\n` +
+                `**Exploit Automation Tracking & VCs**\n` +
+                `• \`check [name]\` — Query structural exploit bypass signatures.\n` +
+                `• \`statusvc [crashy/eazy] #channel\` — Bind automatically locked tracking text lines into targeted voice channels.\n` +
+                `• \`maintenance @bot [true/false]\` — Toggle bot tracking state indicators to Maintenance mode.\n\n` +
                 `**Punishments & Restraints**\n` +
                 `• \`kick / ban @user [reason]\` — Core member removal actions.\n` +
-                `• \`unban [id]\` — Clear target restrictions by identifier index.\n` +
-                `• \`warn @user [reason]\` — Log behaviors. Escalates automatically (4 warns = 24h timeout, 5 warns = Ban).\n` +
+                `• \`unban [id]\` — Clear target restrictions.\n` +
+                `• \`warn @user [reason]\` — Log behavior warnings. (4 warns = 24h timeout, 5 = Ban).\n` +
+                `• \`warns @user\` — Check comprehensive history log sheets and historical warning notes.\n` +
                 `• \`clearwarns @user\` — Clear warning counts for a user profile.\n` +
                 `• \`mute / unmute @user\` — Restrict messaging metrics securely.\n` +
-                `• \`nickname @user [name]\` — Force change or reset a server member's nickname display profile.\n\n` +
+                `• \`nickname @user [name]\` — Force change or reset profile nicknames.\n\n` +
                 `**Channel Management Operations**\n` +
                 `• \`clear [1-100]\` — Clean clutter text blocks from channel flows.\n` +
-                `• \`slowmode [seconds] [channel]\` — Apply precise slowmode delays to specific channels.\n` +
+                `• \`slowmode [seconds] [channel]\` — Apply precise slowmode delays.\n` +
                 `• \`lock / unlock\` — Toggle message writing rights instantly.\n` +
                 `• \`lockdown / unlockdown\` — Global server channel freezing arrays.\n` +
                 `• \`chatlogs @user\` — Review last 15 elements cached by user footprint.\n\n` +
@@ -502,18 +610,24 @@ client.on('messageCreate', async (message) => {
         
         const targetMember = message.mentions.members.first();
         if (!targetMember) return sendError(message, "Please tag a target profile. Usage: `!warn @user [reason]`");
-        if (targetMember.user.bot) return sendError(message, "Automated bot infrastructure cannot be processed with dynamic behavior warnings.");
+        if (targetMember.user.bot) return sendError(message, "Automated bot infrastructure cannot be processed with behavioral warnings.");
 
         const reason = args.slice(1).join(" ") || "No reason specified";
         
-        // Track warnings inside collection array
-        let currentWarns = userWarnings.get(targetMember.id) || 0;
-        currentWarns++;
-        userWarnings.set(targetMember.id, currentWarns);
+        if (!userWarnings.has(targetMember.id)) userWarnings.set(targetMember.id, []);
+        const logs = userWarnings.get(targetMember.id);
+        
+        logs.push({
+            reason: reason,
+            timestamp: new Date().toLocaleString(),
+            moderator: message.author.tag
+        });
+
+        const currentWarns = logs.length;
 
         const warnEmbed = new EmbedBuilder()
             .setColor(0xE67E22)
-            .setTitle('⚠️ Structural Warning Logged')
+            .setTitle('⚠️ Behavioral Warning Logged')
             .setDescription(`**User:** ${targetMember.user.tag}\n**Total Warnings:** \`${currentWarns}/5\`\n**Reason:** *${reason}*`)
             .setTimestamp();
 
@@ -530,6 +644,32 @@ client.on('messageCreate', async (message) => {
             return sendSuccess(message, `User **${targetMember.user.tag}** reached **5 warnings** and has been permanently banned.`);
         }
         return;
+    }
+
+    // --- !warns Lookup Command ---
+    if (command === 'warns') {
+        const targetMember = message.mentions.members.first() || message.member;
+        const logs = userWarnings.get(targetMember.id) || [];
+
+        if (logs.length === 0) {
+            return message.reply({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor(0x2ECC71)
+                        .setDescription(`✅ **${targetMember.user.tag}** has a clean operational profile. No warnings found.`)
+                ]
+            });
+        }
+
+        const historyText = logs.map((w, idx) => `**${idx + 1}.** \`[${w.timestamp}]\` by *${w.moderator}*\n└ Reason: *${w.reason}*`).join('\n\n');
+
+        const historyEmbed = new EmbedBuilder()
+            .setColor(0xF39C12)
+            .setTitle(`📋 Warnings Audit Profile: ${targetMember.user.tag}`)
+            .setDescription(`Total Warning Constraints Active: \`${logs.length}/5\`\n\n${historyText}`)
+            .setTimestamp();
+
+        return message.reply({ embeds: [historyEmbed] });
     }
 
     // --- !clearwarns Command ---
@@ -556,7 +696,6 @@ client.on('messageCreate', async (message) => {
             return sendError(message, "Provide a valid slowmode integer delay constraint between 0 (off) and 21600 seconds.");
         }
 
-        // Handle structural target parsing loops for target channels or fallback to active context
         const targetChannel = message.mentions.channels.first() || message.channel;
         
         if (!targetChannel.isTextBased()) {
@@ -797,7 +936,7 @@ client.on('messageCreate', async (message) => {
         const minutes = Math.floor((uptimeRaw % 3600000) / 60000);
         
         const currentPing = client.ws.ping;
-        const botStatusText = currentPing > 0 && currentPing < 1000 ? '🟢 Working' : '🔴 Lagging';
+        const botStatusText = versionConfig.maintenanceMode ? '🟠 Maintenance' : (currentPing > 0 && currentPing < 1200 ? '🟢 Working' : '🔴 Lagging');
 
         let ghStatus = '🟢 Working';
         try { await fetch('https://api.github.com', { method: 'HEAD', signal: AbortSignal.timeout(1000) }); } catch { ghStatus = '🔴 Fault'; }
