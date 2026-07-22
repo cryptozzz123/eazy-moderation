@@ -5,7 +5,8 @@ const {
     // The following only exist on newer discord.js versions (Components V2 / "Containers").
     // If this bot's installed discord.js doesn't have them, they'll simply be undefined here
     // and the code below automatically falls back to normal embeds — nothing breaks.
-    ContainerBuilder, TextDisplayBuilder, SeparatorBuilder, SeparatorSpacingSize, MessageFlags
+    ContainerBuilder, TextDisplayBuilder, SeparatorBuilder, SeparatorSpacingSize, MessageFlags,
+    MediaGalleryBuilder, MediaGalleryItemBuilder, AttachmentBuilder
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -485,17 +486,31 @@ client.on('messageCreate', async (message) => {
             new ButtonBuilder().setLabel('Get Bot').setStyle(ButtonStyle.Link).setURL(INVITE_URL)
         );
 
+        // The HELP banner image lives at /assets/help_banner.png next to this file.
+        // If it's missing (e.g. not uploaded yet), everything falls back to the plain
+        // "# H E L P" text header instead of erroring out.
+        const helpBannerPath = path.join(__dirname, 'assets', 'help_banner.png');
+        const hasHelpBanner = !!AttachmentBuilder && fs.existsSync(helpBannerPath);
+        const helpBannerAttachment = hasHelpBanner
+            ? new AttachmentBuilder(helpBannerPath, { name: 'help_banner.png' })
+            : null;
+
         // Original, guaranteed-compatible embed layout — used as the fallback.
         const sendClassicEmbed = () => {
             const cmdsEmbed = new EmbedBuilder()
                 .setColor(0x3498DB)
                 .setDescription(
-                    `# H E L P\n\n` +
+                    (hasHelpBanner ? '' : `# H E L P\n\n`) +
                     `**Status:** ${statusDot}\n\n` +
                     `Use the prefix \`${prefix}\` before executing any commands listed below.\n\n` +
                     helpSections.map(s => `**${s.title}**\n${s.lines.map(l => `• ${l}`).join('\n')}`).join('\n\n')
                 );
-            return message.reply({ embeds: [cmdsEmbed], components: [getBotRow] });
+            if (hasHelpBanner) cmdsEmbed.setImage('attachment://help_banner.png');
+            return message.reply({
+                embeds: [cmdsEmbed],
+                components: [getBotRow],
+                files: hasHelpBanner ? [helpBannerAttachment] : []
+            });
         };
 
         // Discohook-style "container" layout using Discord's Components V2. Only attempted
@@ -505,9 +520,17 @@ client.on('messageCreate', async (message) => {
             try {
                 const container = new ContainerBuilder();
 
-                container.addTextDisplayComponents(
-                    new TextDisplayBuilder().setContent(`# H E L P`)
-                );
+                if (hasHelpBanner && MediaGalleryBuilder && MediaGalleryItemBuilder) {
+                    container.addMediaGalleryComponents(
+                        new MediaGalleryBuilder().addItems(
+                            new MediaGalleryItemBuilder().setURL('attachment://help_banner.png')
+                        )
+                    );
+                } else {
+                    container.addTextDisplayComponents(
+                        new TextDisplayBuilder().setContent(`# H E L P`)
+                    );
+                }
 
                 container.addTextDisplayComponents(
                     new TextDisplayBuilder().setContent(`**Status:** ${statusDot}`)
@@ -541,7 +564,8 @@ client.on('messageCreate', async (message) => {
 
                 return await message.reply({
                     components: [container],
-                    flags: MessageFlags.IsComponentsV2
+                    flags: MessageFlags.IsComponentsV2,
+                    files: hasHelpBanner ? [helpBannerAttachment] : []
                 });
             } catch (err) {
                 console.error("⚠️ Components V2 container failed, falling back to standard embed:", err.message);
