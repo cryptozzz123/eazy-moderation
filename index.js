@@ -1,7 +1,17 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, PermissionFlagsBits, EmbedBuilder, Collection, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } = require('discord.js');
+const {
+    Client, GatewayIntentBits, PermissionFlagsBits, EmbedBuilder, Collection,
+    ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType,
+    // The following only exist on newer discord.js versions (Components V2 / "Containers").
+    // If this bot's installed discord.js doesn't have them, they'll simply be undefined here
+    // and the code below automatically falls back to normal embeds — nothing breaks.
+    ContainerBuilder, TextDisplayBuilder, SeparatorBuilder, SeparatorSpacingSize, MessageFlags
+} = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+
+// Shared reference to the "crashy" bot's Discord user ID (used for presence + maintenance checks)
+const CRASHY_USER_ID = '1512062436411183114';
 
 const client = new Client({
     intents: [
@@ -19,7 +29,7 @@ const CONFIG_PATH = path.join(__dirname, 'version_config.json');
 let versionConfig = {
     channels: [], 
     statusVCs: { crashy: null, eazy: null }, // Stores the auto-created VC IDs
-    maintenanceMode: false,                  
+    maintenanceMode: { eazy: false, crashy: false },
     lastVersions: {
         live: {},
         beta: {},
@@ -36,6 +46,14 @@ if (fs.existsSync(CONFIG_PATH)) {
     } catch (e) {
         console.error("⚠️ Failed to parse version_config.json, starting fresh.", e);
     }
+}
+
+// Backwards-compatible migration: older configs stored maintenanceMode as a single true/false
+// for this bot only. Upgrade it to the new per-bot object shape without losing that value.
+if (typeof versionConfig.maintenanceMode === 'boolean') {
+    versionConfig.maintenanceMode = { eazy: versionConfig.maintenanceMode, crashy: false };
+} else if (!versionConfig.maintenanceMode || typeof versionConfig.maintenanceMode !== 'object') {
+    versionConfig.maintenanceMode = { eazy: false, crashy: false };
 }
 
 function saveConfig() {
@@ -87,19 +105,23 @@ async function updateStatusVoiceChannels() {
     const defaultGuild = client.guilds.cache.first();
 
     let eazyText = "Eazy Moderation : Working 🟢";
-    if (versionConfig.maintenanceMode) {
+    if (versionConfig.maintenanceMode?.eazy) {
         eazyText = "Eazy Moderation : Maintenance 🟠";
     } else if (client.ws.ping <= 0 || client.ws.ping > 1200) {
         eazyText = "Eazy Moderation : Down 🔴";
     }
 
     let crashyText = "crashy : Down 🔴";
-    try {
-        const crashyMember = await defaultGuild.members.fetch('1512062436411183114').catch(() => null);
-        if (crashyMember?.presence?.status && crashyMember.presence.status !== 'offline') {
-            crashyText = "crashy : Working 🟢";
-        }
-    } catch {}
+    if (versionConfig.maintenanceMode?.crashy) {
+        crashyText = "crashy : Maintenance 🟠";
+    } else {
+        try {
+            const crashyMember = await defaultGuild.members.fetch(CRASHY_USER_ID).catch(() => null);
+            if (crashyMember?.presence?.status && crashyMember.presence.status !== 'offline') {
+                crashyText = "crashy : Working 🟢";
+            }
+        } catch {}
+    }
 
     if (versionConfig.statusVCs?.eazy) {
         const chan = await client.channels.fetch(versionConfig.statusVCs.eazy).catch(() => null);
@@ -243,8 +265,8 @@ client.on('messageCreate', async (message) => {
         }
 
         const botMention = message.mentions.users.first();
-        if (!botMention || botMention.id !== client.user.id) {
-            return sendError(message, "You must ping the bot. Usage: `!maintenance @bot [true/false]`");
+        if (!botMention || (botMention.id !== client.user.id && botMention.id !== CRASHY_USER_ID)) {
+            return sendError(message, "You must ping a tracked bot (this bot or crashy). Usage: `!maintenance @bot [true/false]`");
         }
 
         const valueParam = args[1]?.toLowerCase();
@@ -252,17 +274,20 @@ client.on('messageCreate', async (message) => {
             return sendError(message, "Invalid setting. Please use either `true` or `false`.");
         }
 
-        if (valueParam === 'true') {
-            versionConfig.maintenanceMode = true;
-            saveConfig();
-            await updateStatusVoiceChannels();
-            return sendSuccess(message, "Bot status switched to **Maintenance 🟠**.");
-        } else {
-            versionConfig.maintenanceMode = false;
-            saveConfig();
-            await updateStatusVoiceChannels();
-            return sendSuccess(message, "Bot status returned to **Working 🟢**.");
-        }
+        const targetKey = botMention.id === CRASHY_USER_ID ? 'crashy' : 'eazy';
+        const targetLabel = targetKey === 'crashy' ? 'crashy' : 'Eazy Moderation';
+        const newState = valueParam === 'true';
+
+        versionConfig.maintenanceMode[targetKey] = newState;
+        saveConfig();
+        await updateStatusVoiceChannels();
+
+        return sendSuccess(
+            message,
+            newState
+                ? `**${targetLabel}** status switched to **Maintenance 🟠**.`
+                : `**${targetLabel}** status returned to **Working 🟢**.`
+        );
     }
 
     // --- !statusvc Command (Creates Voice Channels Directly Without Category) ---
@@ -386,52 +411,128 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'help') {
-        const cmdsEmbed = new EmbedBuilder()
-            .setColor(0x3498DB)
-            .setTitle('📖 Eazy Moderation | Complete Commands Registry')
-            .setDescription(
-                `Use the prefix \`${prefix}\` before executing any commands listed below.\n\n` +
-                `**Core Utilities**\n` +
-                `• \`ping\` — Check real-time Discord API latency responses.\n` +
-                `• \`version\` — Return system architecture build strings.\n` +
-                `• \`status\` — Multi-endpoint framework health check values.\n` +
-                `• \`help\` — Display this clean master systems guide.\n` +
-                `• \`botlogs\` — View last 10 commands parsed through memory.\n` +
-                `• \`afk [message]\` — Mark yourself away from keyboard with custom status messages.\n` +
-                `• \`userinfo [@user]\` — View a member's detail card.\n` +
-                `• \`serverinfo\` — View complete structural details of the server.\n` +
-                `• \`members\` — View total current users present inside the community footprint.\n\n` +
-                `**Roblox Version Engines**\n` +
-                `• \`currentver\` — Returns current versions with auto-updating download buttons.\n` +
-                `• \`downgrade\` — Returns previous production rollback builds.\n` +
-                `• \`futurever\` — Query upcoming deployment configurations.\n\n` +
-                `**Exploit Automation Tracking & VCs**\n` +
-                `• \`check [name]\` — Query structural exploit bypass signatures.\n` +
-                `• \`statusvc\` — Automatically setup channels layout to track bot status.\n` +
-                `• \`maintenance @bot [true/false]\` — Toggle bot tracking state indicators to Maintenance mode.\n\n` +
-                `**Punishments & Restraints**\n` +
-                `• \`kick / ban @user [reason]\` — Core member removal actions.\n` +
-                `• \`unban [id]\` — Clear target restrictions.\n` +
-                `• \`warn @user [reason]\` — Log behavior warnings. (4 warns = 24h timeout, 5 = Ban).\n` +
-                `• \`warns @user\` — Check comprehensive history log sheets and historical warning notes.\n` +
-                `• \`clearwarns @user\` — Clear warning counts for a user profile.\n` +
-                `• \`mute / unmute @user\` — Restrict messaging metrics securely.\n` +
-                `• \`nickname @user [name]\` — Force change or reset profile nicknames.\n\n` +
-                `**Channel Management Operations**\n` +
-                `• \`clear [1-100]\` — Clean clutter text blocks from channel flows.\n` +
-                `• \`slowmode [seconds] [channel]\` — Apply precise slowmode delays.\n` +
-                `• \`lock / unlock\` — Toggle message writing rights instantly.\n` +
-                `• \`lockdown / unlockdown\` — Global server channel freezing arrays.\n` +
-                `• \`chatlogs @user\` — Review last 15 elements cached by user footprint.\n\n` +
-                `**Voice Channel Restraints & Roles**\n` +
-                `• \`mutevc @user\` — Toggle targeted voice server mic muting.\n` +
-                `• \`deafen @user\` — Toggle targeted voice server auditory deafen status.\n` +
-                `• \`role @user [Name/ID]\` — Bind assigned role value patterns directly.\n` +
-                `• \`unrole @user [Name/ID]\` — Strip assigned role value patterns directly.`
-            )
-            .setFooter({ text: `System Version v${BOT_VERSION} • Operations Profile` })
-            .setTimestamp();
-        return message.reply({ embeds: [cmdsEmbed] });
+        // Command list, grouped by section — used to build either the Components V2
+        // "container" layout (if this discord.js supports it) or the classic embed.
+        const helpSections = [
+            {
+                title: '🧰 Core Utilities',
+                lines: [
+                    '`ping` — Check real-time Discord API latency responses.',
+                    '`version` — Return system architecture build strings.',
+                    '`status` — Multi-endpoint framework health check values.',
+                    '`help` — Display this clean master systems guide.',
+                    '`botlogs` — View last 10 commands parsed through memory.',
+                    '`afk [message]` — Mark yourself away from keyboard with custom status messages.',
+                    "`userinfo [@user]` — View a member's detail card.",
+                    '`serverinfo` — View complete structural details of the server.',
+                    '`members` — View total current users present inside the community footprint.'
+                ]
+            },
+            {
+                title: '🎮 Roblox Version Engines',
+                lines: [
+                    '`currentver` — Returns current versions with auto-updating download buttons.',
+                    '`downgrade` — Returns previous production rollback builds.',
+                    '`futurever` — Query upcoming deployment configurations.'
+                ]
+            },
+            {
+                title: '🛡️ Exploit Automation Tracking & VCs',
+                lines: [
+                    '`check [name]` — Query structural exploit bypass signatures.',
+                    '`statusvc` — Automatically setup channels layout to track bot status.',
+                    '`maintenance @bot [true/false]` — Toggle Maintenance mode for this bot **or crashy**.'
+                ]
+            },
+            {
+                title: '🔨 Punishments & Restraints',
+                lines: [
+                    '`kick / ban @user [reason]` — Core member removal actions.',
+                    '`unban [id]` — Clear target restrictions.',
+                    '`warn @user [reason]` — Log behavior warnings. (4 warns = 24h timeout, 5 = Ban).',
+                    '`warns @user` — Check comprehensive history log sheets and historical warning notes.',
+                    '`clearwarns @user` — Clear warning counts for a user profile.',
+                    '`mute / unmute @user` — Restrict messaging metrics securely.',
+                    '`nickname @user [name]` — Force change or reset profile nicknames.'
+                ]
+            },
+            {
+                title: '📁 Channel Management Operations',
+                lines: [
+                    '`clear [1-100]` — Clean clutter text blocks from channel flows.',
+                    '`slowmode [seconds] [channel]` — Apply precise slowmode delays.',
+                    '`lock / unlock` — Toggle message writing rights instantly.',
+                    '`lockdown / unlockdown` — Global server channel freezing arrays.',
+                    '`chatlogs @user` — Review last 15 elements cached by user footprint.'
+                ]
+            },
+            {
+                title: '🔊 Voice Channel Restraints & Roles',
+                lines: [
+                    '`mutevc @user` — Toggle targeted voice server mic muting.',
+                    '`deafen @user` — Toggle targeted voice server auditory deafen status.',
+                    '`role @user [Name/ID]` — Bind assigned role value patterns directly.',
+                    '`unrole @user [Name/ID]` — Strip assigned role value patterns directly.'
+                ]
+            }
+        ];
+
+        // Original, guaranteed-compatible embed layout — used as the fallback.
+        const sendClassicEmbed = () => {
+            const cmdsEmbed = new EmbedBuilder()
+                .setColor(0x3498DB)
+                .setTitle('📖 Eazy Moderation | Complete Commands Registry')
+                .setDescription(
+                    `Use the prefix \`${prefix}\` before executing any commands listed below.\n\n` +
+                    helpSections.map(s => `**${s.title}**\n${s.lines.map(l => `• ${l}`).join('\n')}`).join('\n\n')
+                )
+                .setFooter({ text: `System Version v${BOT_VERSION} • Operations Profile` })
+                .setTimestamp();
+            return message.reply({ embeds: [cmdsEmbed] });
+        };
+
+        // Discohook-style "container" layout using Discord's Components V2. Only attempted
+        // if this bot's installed discord.js version actually exposes these builders — on
+        // older versions they're undefined and we go straight to the classic embed above.
+        if (ContainerBuilder && TextDisplayBuilder && SeparatorBuilder && MessageFlags) {
+            try {
+                const container = new ContainerBuilder().setAccentColor(0x3498DB);
+
+                container.addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(
+                        `# 📖 Eazy Moderation — Complete Commands Registry\nUse the prefix \`${prefix}\` before executing any commands listed below.`
+                    )
+                );
+
+                for (const section of helpSections) {
+                    container.addSeparatorComponents(
+                        new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small)
+                    );
+                    container.addTextDisplayComponents(
+                        new TextDisplayBuilder().setContent(
+                            `**${section.title}**\n${section.lines.map(l => `• ${l}`).join('\n')}`
+                        )
+                    );
+                }
+
+                container.addSeparatorComponents(
+                    new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small)
+                );
+                container.addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(`-# System Version v${BOT_VERSION} • Operations Profile`)
+                );
+
+                return await message.reply({
+                    components: [container],
+                    flags: MessageFlags.IsComponentsV2
+                });
+            } catch (err) {
+                console.error("⚠️ Components V2 container failed, falling back to standard embed:", err.message);
+                return sendClassicEmbed();
+            }
+        }
+
+        return sendClassicEmbed();
     }
 
     if (command === 'currentver') {
@@ -940,16 +1041,20 @@ client.on('messageCreate', async (message) => {
         const minutes = Math.floor((uptimeRaw % 3600000) / 60000);
         
         const currentPing = client.ws.ping;
-        const botStatusText = versionConfig.maintenanceMode ? '🟠 Maintenance' : (currentPing > 0 && currentPing < 1200 ? '🟢 Working' : '🔴 Lagging');
+        const botStatusText = versionConfig.maintenanceMode?.eazy ? '🟠 Maintenance' : (currentPing > 0 && currentPing < 1200 ? '🟢 Working' : '🔴 Lagging');
 
         let ghStatus = '🟢 Working';
         try { await fetch('https://api.github.com', { method: 'HEAD', signal: AbortSignal.timeout(1000) }); } catch { ghStatus = '🔴 Fault'; }
 
         let crashyStatus = '🔴 Down';
-        try {
-            const crashy = await message.guild.members.fetch('1512062436411183114');
-            if (crashy?.presence?.status && crashy.presence.status !== 'offline') crashyStatus = '🟢 Working';
-        } catch {}
+        if (versionConfig.maintenanceMode?.crashy) {
+            crashyStatus = '🟠 Maintenance';
+        } else {
+            try {
+                const crashy = await message.guild.members.fetch(CRASHY_USER_ID);
+                if (crashy?.presence?.status && crashy.presence.status !== 'offline') crashyStatus = '🟢 Working';
+            } catch {}
+        }
 
         const statusEmbed = new EmbedBuilder()
             .setColor(0x2ECC71)
