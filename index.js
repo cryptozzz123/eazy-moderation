@@ -477,18 +477,25 @@ client.on('messageCreate', async (message) => {
             }
         ];
 
+        const INVITE_URL = 'https://discord.com/oauth2/authorize?client_id=1513386994510598144&scope=bot&permissions=8';
+        const currentPing = client.ws.ping;
+        const statusDot = versionConfig.maintenanceMode?.eazy ? '🟠' : (currentPing > 0 && currentPing < 1200 ? '🟢' : '🔴');
+
+        const getBotRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setLabel('Get Bot').setStyle(ButtonStyle.Link).setURL(INVITE_URL)
+        );
+
         // Original, guaranteed-compatible embed layout — used as the fallback.
         const sendClassicEmbed = () => {
             const cmdsEmbed = new EmbedBuilder()
                 .setColor(0x3498DB)
-                .setTitle('📖 Eazy Moderation | Complete Commands Registry')
                 .setDescription(
+                    `# H E L P\n\n` +
+                    `**Status:** ${statusDot}\n\n` +
                     `Use the prefix \`${prefix}\` before executing any commands listed below.\n\n` +
                     helpSections.map(s => `**${s.title}**\n${s.lines.map(l => `• ${l}`).join('\n')}`).join('\n\n')
-                )
-                .setFooter({ text: `System Version v${BOT_VERSION} • Operations Profile` })
-                .setTimestamp();
-            return message.reply({ embeds: [cmdsEmbed] });
+                );
+            return message.reply({ embeds: [cmdsEmbed], components: [getBotRow] });
         };
 
         // Discohook-style "container" layout using Discord's Components V2. Only attempted
@@ -499,8 +506,20 @@ client.on('messageCreate', async (message) => {
                 const container = new ContainerBuilder().setAccentColor(0x3498DB);
 
                 container.addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(`# H E L P`)
+                );
+
+                container.addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(`**Status:** ${statusDot}`)
+                );
+
+                container.addSeparatorComponents(
+                    new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small)
+                );
+
+                container.addTextDisplayComponents(
                     new TextDisplayBuilder().setContent(
-                        `# 📖 Eazy Moderation — Complete Commands Registry\nUse the prefix \`${prefix}\` before executing any commands listed below.`
+                        `Use the prefix \`${prefix}\` before executing any commands listed below.`
                     )
                 );
 
@@ -518,9 +537,7 @@ client.on('messageCreate', async (message) => {
                 container.addSeparatorComponents(
                     new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small)
                 );
-                container.addTextDisplayComponents(
-                    new TextDisplayBuilder().setContent(`-# System Version v${BOT_VERSION} • Operations Profile`)
-                );
+                container.addActionRowComponents(getBotRow);
 
                 return await message.reply({
                     components: [container],
