@@ -486,10 +486,10 @@ client.on('messageCreate', async (message) => {
             new ButtonBuilder().setLabel('Get Bot').setStyle(ButtonStyle.Link).setURL(INVITE_URL)
         );
 
-        // The HELP banner image lives at /assets/help_banner.png next to this file.
+        // The HELP banner image (help_banner.png) lives right next to this file.
         // If it's missing (e.g. not uploaded yet), everything falls back to the plain
         // "# H E L P" text header instead of erroring out.
-        const helpBannerPath = path.join(__dirname, 'assets', 'help_banner.png');
+        const helpBannerPath = path.join(__dirname, 'help_banner.png');
         const hasHelpBanner = !!AttachmentBuilder && fs.existsSync(helpBannerPath);
         const helpBannerAttachment = hasHelpBanner
             ? new AttachmentBuilder(helpBannerPath, { name: 'help_banner.png' })
