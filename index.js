@@ -503,7 +503,7 @@ client.on('messageCreate', async (message) => {
         // older versions they're undefined and we go straight to the classic embed above.
         if (ContainerBuilder && TextDisplayBuilder && SeparatorBuilder && MessageFlags) {
             try {
-                const container = new ContainerBuilder().setAccentColor(0x3498DB);
+                const container = new ContainerBuilder();
 
                 container.addTextDisplayComponents(
                     new TextDisplayBuilder().setContent(`# H E L P`)
