@@ -14,6 +14,14 @@ const path = require('path');
 // Shared reference to the "crashy" bot's Discord user ID (used for presence + maintenance checks)
 const CRASHY_USER_ID = '1512062436411183114';
 
+// Only this user may toggle !maintenance
+const MAINTENANCE_USER_ID = '1161980923168952410';
+
+// Banner images for the Roblox LIVE / Beta / Hidden alert cards (!setrblxupd / !setbetarblx / !sethidrblx)
+const RBLX_LIVE_BANNER_URL = 'https://cdn.discordapp.com/attachments/1499365932685070486/1529518568528674897/LIVE.png?ex=6a62e36b&is=6a6191eb&hm=6a89f509738444f7b5a66499dc9753c3b82106ffb16baff34fdae72014534dee&';
+const RBLX_BETA_BANNER_URL = 'https://cdn.discordapp.com/attachments/1499365932685070486/1529257162436640778/BETA.png?ex=6a634177&is=6a61eff7&hm=3d590db7d58b0cdbd6340a8c5196a227e7de398bf3f02af330c25cad39688eaf&';
+const RBLX_HIDDEN_BANNER_URL = 'https://cdn.discordapp.com/attachments/1499365932685070486/1529458299467202730/HIDDEN.png?ex=6a62ab4a&is=6a6159ca&hm=f08b95e7e1bbe2bfe1bfb66fb1aa1dc15b5b865d29d85d1f6005179d555b6e33&';
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -29,12 +37,13 @@ const CONFIG_PATH = path.join(__dirname, 'version_config.json');
 
 let versionConfig = {
     channels: [], 
+    robloxChannels: { live: null, beta: null, hidden: null }, // Channels set via !setrblxupd / !setbetarblx / !sethidrblx
     statusVCs: { crashy: null, eazy: null }, // Stores the auto-created VC IDs
     maintenanceMode: { eazy: false, crashy: false },
     lastVersions: {
-        live: {},
-        beta: {},
-        hidden: {}
+        live: null,
+        beta: null,
+        hidden: null
     }
 };
 
@@ -55,6 +64,20 @@ if (typeof versionConfig.maintenanceMode === 'boolean') {
     versionConfig.maintenanceMode = { eazy: versionConfig.maintenanceMode, crashy: false };
 } else if (!versionConfig.maintenanceMode || typeof versionConfig.maintenanceMode !== 'object') {
     versionConfig.maintenanceMode = { eazy: false, crashy: false };
+}
+
+// Backwards-compatible migration: lastVersions used to default to empty objects that were
+// never actually wired up (there was no command yet to set a destination channel). Reset any
+// leftover object shape to null so the live/beta/hidden change-detection works correctly.
+if (versionConfig.lastVersions) {
+    for (const key of ['live', 'beta', 'hidden']) {
+        if (versionConfig.lastVersions[key] && typeof versionConfig.lastVersions[key] === 'object') {
+            versionConfig.lastVersions[key] = null;
+        }
+    }
+}
+if (!versionConfig.robloxChannels || typeof versionConfig.robloxChannels !== 'object') {
+    versionConfig.robloxChannels = { live: null, beta: null, hidden: null };
 }
 
 function saveConfig() {
@@ -135,58 +158,187 @@ async function updateStatusVoiceChannels() {
 }
 
 async function checkRobloxVersions() {
-    if (!versionConfig.channels || versionConfig.channels.length === 0) return;
-
-    try {
-        const currentRes = await fetch('https://weao.xyz/api/versions/current');
-        if (currentRes.ok) {
-            const data = await currentRes.json();
-            const liveVer = data.Windows || '';
-
-            if (liveVer && versionConfig.lastVersions.live !== liveVer) {
-                await dispatch1to1Embed('live', liveVer);
-                versionConfig.lastVersions.live = liveVer;
-                saveConfig();
+    // --- LIVE ---
+    if (versionConfig.robloxChannels?.live) {
+        try {
+            const res = await fetch('https://weao.xyz/api/versions/current');
+            if (res.ok) {
+                const data = await res.json();
+                const liveVer = data.Windows || '';
+                if (liveVer && versionConfig.lastVersions.live !== liveVer) {
+                    const isFirstRun = !versionConfig.lastVersions.live;
+                    versionConfig.lastVersions.live = liveVer;
+                    saveConfig();
+                    if (!isFirstRun) {
+                        await sendRobloxAlertToChannel('live', liveVer, data.WindowsDate || new Date().toLocaleString());
+                    }
+                }
             }
-        }
-    } catch (err) {
-        console.error("❌ Error polling live endpoint:", err.message);
+        } catch (err) { console.error("❌ Error polling live endpoint:", err.message); }
+    }
+
+    // --- BETA / FUTURE ---
+    if (versionConfig.robloxChannels?.beta) {
+        try {
+            const res = await fetch('https://weao.xyz/api/versions/future');
+            if (res.ok) {
+                const data = await res.json();
+                const betaVer = data.Windows || '';
+                if (betaVer && versionConfig.lastVersions.beta !== betaVer) {
+                    const isFirstRun = !versionConfig.lastVersions.beta;
+                    versionConfig.lastVersions.beta = betaVer;
+                    saveConfig();
+                    if (!isFirstRun) {
+                        await sendRobloxAlertToChannel('beta', betaVer, data.WindowsDate || new Date().toLocaleString());
+                    }
+                }
+            }
+        } catch (err) { console.error("❌ Error polling future endpoint:", err.message); }
+    }
+
+    // --- HIDDEN (WEAO doesn't expose this — pulled directly from Roblox's own DeployHistory.txt) ---
+    if (versionConfig.robloxChannels?.hidden) {
+        try {
+            const entry = await getLatestHiddenWindowsEntry();
+            if (entry) {
+                const signature = `${entry.versionLabel}|${entry.dateStr}`;
+                if (versionConfig.lastVersions.hidden !== signature) {
+                    const isFirstRun = !versionConfig.lastVersions.hidden;
+                    versionConfig.lastVersions.hidden = signature;
+                    saveConfig();
+                    if (!isFirstRun) {
+                        await sendRobloxAlertToChannel('hidden', entry.versionLabel, entry.dateStr);
+                    }
+                }
+            }
+        } catch (err) { console.error("❌ Error polling DeployHistory.txt:", err.message); }
     }
 }
 
-async function dispatch1to1Embed(type, versionString) {
-    if (versionString === 'N/A' || !versionString) return;
-    const timestampUnix = Math.floor(Date.now() / 1000);
-    const embed = new EmbedBuilder();
-    let componentsArray = [];
+/**
+ * "Hidden" builds don't come from WEAO's API — they only ever show up in Roblox's own
+ * DeployHistory.txt as a "version-hidden" entry (Roblox intentionally redacts the real hash).
+ * We pull the human-readable build number out of that entry's "file version" field instead.
+ */
+async function getLatestHiddenWindowsEntry() {
+    const res = await fetch('https://setup.rbxcdn.com/DeployHistory.txt');
+    if (!res.ok) return null;
 
-    if (type === 'live') {
-        embed.setColor(0xFF0000)
-             .setTitle('Live update detected!')
-             .setDescription(`This is a live ROBLOX update, Real is patched.\n\n**Platform:** Windows\n**Roblox Version:** \`${versionString}\`\n**Detected:** <t:${timestampUnix}:F>`)
-             .setImage("https://cdn.discordapp.com/attachments/1499365932685070486/1524082621951377630/LIVE.png");
-
-        const downloadLink = `https://rdd.weao.xyz/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(versionString)}&includeLauncher=true&parallelDownloads=true`;
-
-        const downloadRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setLabel('Download Windows')
-                .setStyle(ButtonStyle.Link)
-                .setURL(downloadLink)
-        );
-        componentsArray.push(downloadRow);
-    }
-
-    for (const channelId of versionConfig.channels) {
-        try {
-            const channel = await client.channels.fetch(channelId).catch(() => null);
-            if (channel?.isTextBased()) {
-                await channel.send({ content: "<@&1497655173047386282>", embeds: [embed], components: componentsArray });
-            }
-        } catch (e) {
-            console.error(`⚠️ Delivery failure to channel context: ${channelId}`);
+    // DeployHistory.txt is append-only, so the newest matching entry is at the bottom.
+    const lines = (await res.text()).split('\n');
+    let latestLine = null;
+    for (let i = lines.length - 1; i >= 0; i--) {
+        if (lines[i].includes('WindowsPlayer') && lines[i].includes('version-hidden')) {
+            latestLine = lines[i];
+            break;
         }
     }
+    if (!latestLine) return null;
+
+    const dateMatch = latestLine.match(/version-hidden at ([^,]+),/);
+    const fileVerMatch = latestLine.match(/file version:\s*([\d,\s]+),\s*git hash:/);
+
+    const dateStr = dateMatch ? dateMatch[1].trim() : 'Unknown';
+
+    // Prefer the reconstructed build number (e.g. "0.731.0.7310942"); fall back to labeling
+    // it literally as "version-hidden" if Roblox ever omits that field too.
+    let versionLabel = 'version-hidden';
+    if (fileVerMatch) {
+        const parts = fileVerMatch[1].split(',').map(p => p.trim()).filter(Boolean);
+        if (parts.length > 0) versionLabel = parts.join('.');
+    }
+
+    return { versionLabel, dateStr };
+}
+
+/**
+ * Builds the Components V2 "container" alert card (Discohook-style, no accent color) for a
+ * Roblox live/beta/hidden update — falling back to a classic embed automatically if this
+ * bot's installed discord.js doesn't support Components V2.
+ */
+async function buildRobloxAlertPayload(type, versionString, dateStr) {
+    let title, desc, banner;
+    if (type === 'live') {
+        title = 'Live update detected!';
+        desc = 'A new ROBLOX LIVE version is out.';
+        banner = RBLX_LIVE_BANNER_URL;
+    } else if (type === 'beta') {
+        title = 'Beta update detected!';
+        desc = 'A new ROBLOX beta build was detected before LIVE.';
+        banner = RBLX_BETA_BANNER_URL;
+    } else {
+        title = 'Version-hidden detected!';
+        desc = 'A new WindowsPlayer version-hidden appeared in DeployHistory.';
+        banner = RBLX_HIDDEN_BANNER_URL;
+    }
+
+    const fieldsText = `**Platform:** Windows\n**Roblox Version:** \`${versionString}\`\n**Detected:** ${dateStr}`;
+
+    // Hidden builds aren't publicly downloadable (Roblox intentionally redacts the real hash),
+    // so only LIVE and Beta get a Download button.
+    let downloadRow = null;
+    if (type !== 'hidden') {
+        const downloadUrl = `https://rdd.weao.xyz/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(versionString)}&includeLauncher=true&parallelDownloads=true`;
+        downloadRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setLabel('Download').setStyle(ButtonStyle.Link).setURL(downloadUrl)
+        );
+    }
+
+    if (ContainerBuilder && TextDisplayBuilder && SeparatorBuilder && MediaGalleryBuilder && MediaGalleryItemBuilder && MessageFlags) {
+        try {
+            const container = new ContainerBuilder();
+            container.addMediaGalleryComponents(
+                new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(banner))
+            );
+            container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`**${title}**`));
+            container.addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small));
+            container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`${desc}\n\n${fieldsText}`));
+            if (downloadRow) {
+                container.addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small));
+                container.addActionRowComponents(downloadRow);
+            }
+            return { components: [container], flags: MessageFlags.IsComponentsV2 };
+        } catch (err) {
+            console.error("⚠️ Components V2 container failed for Roblox alert, falling back to embed:", err.message);
+        }
+    }
+
+    const embed = new EmbedBuilder().setTitle(title).setDescription(`${desc}\n\n${fieldsText}`).setImage(banner);
+    return { embeds: [embed], components: downloadRow ? [downloadRow] : [] };
+}
+
+async function sendRobloxAlertToChannel(type, versionString, dateStr) {
+    const channelId = versionConfig.robloxChannels?.[type];
+    if (!channelId) return;
+    try {
+        const channel = await client.channels.fetch(channelId).catch(() => null);
+        if (channel?.isTextBased()) {
+            const payload = await buildRobloxAlertPayload(type, versionString, dateStr);
+            await channel.send(payload);
+        }
+    } catch (e) {
+        console.error(`⚠️ Failed to deliver Roblox ${type} alert to channel ${channelId}:`, e.message);
+    }
+}
+
+/**
+ * Small confirmation card sent into a channel the moment it's linked via !setrblxupd /
+ * !setbetarblx / !sethidrblx — so there's no need to run any more commands to verify it.
+ */
+async function buildRobloxConfirmationPayload(type) {
+    const labelMap = { live: 'LIVE Roblox Updates', beta: 'Beta Roblox Updates', hidden: 'Hidden Roblox Versions' };
+    const text = `✅ **This channel is now linked for ${labelMap[type]}.**\nAlerts will be posted here automatically going forward.`;
+
+    if (ContainerBuilder && TextDisplayBuilder && MessageFlags) {
+        try {
+            const container = new ContainerBuilder();
+            container.addTextDisplayComponents(new TextDisplayBuilder().setContent(text));
+            return { components: [container], flags: MessageFlags.IsComponentsV2 };
+        } catch (err) {
+            console.error("⚠️ Components V2 confirmation failed, falling back to embed:", err.message);
+        }
+    }
+    return { embeds: [new EmbedBuilder().setColor(0x2ECC71).setDescription(text)] };
 }
 
 client.on('messageCreate', async (message) => {
@@ -261,8 +413,8 @@ client.on('messageCreate', async (message) => {
 
     // --- !maintenance Command Framework ---
     if (command === 'maintenance') {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return sendError(message, "You need Administrator permissions to run this command.");
+        if (message.author.id !== MAINTENANCE_USER_ID) {
+            return sendError(message, "You are not authorized to run this command.");
         }
 
         const botMention = message.mentions.users.first();
@@ -334,6 +486,34 @@ client.on('messageCreate', async (message) => {
             console.error(err);
             return sendError(message, "Failed to create status channels. Check my server permissions hierarchy.");
         }
+    }
+
+    // --- !setrblxupd / !setbetarblx / !sethidrblx Commands (Roblox update channel routing) ---
+    if (command === 'setrblxupd' || command === 'setbetarblx' || command === 'sethidrblx') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return sendError(message, "You need the `Manage Channels` permission to run this command.");
+        }
+
+        const targetChannel = message.mentions.channels.first();
+        if (!targetChannel || !targetChannel.isTextBased()) {
+            return sendError(message, `Please mention a valid text channel. Usage: \`!${command} #channel\``);
+        }
+
+        const typeMap = { setrblxupd: 'live', setbetarblx: 'beta', sethidrblx: 'hidden' };
+        const labelMap = { live: 'LIVE Roblox update', beta: 'Beta Roblox update', hidden: 'Hidden Roblox version' };
+        const type = typeMap[command];
+
+        versionConfig.robloxChannels[type] = targetChannel.id;
+        saveConfig();
+
+        try {
+            const confirmPayload = await buildRobloxConfirmationPayload(type);
+            await targetChannel.send(confirmPayload);
+        } catch (e) {
+            console.error(`⚠️ Failed to send confirmation to channel ${targetChannel.id}:`, e.message);
+        }
+
+        return sendSuccess(message, `${labelMap[type]} alerts will now be sent to ${targetChannel}.`);
     }
 
     // --- !afk Command Framework ---
@@ -434,7 +614,10 @@ client.on('messageCreate', async (message) => {
                 lines: [
                     '`currentver` — Returns current versions with auto-updating download buttons.',
                     '`downgrade` — Returns previous production rollback builds.',
-                    '`futurever` — Query upcoming deployment configurations.'
+                    '`futurever` — Query upcoming deployment configurations.',
+                    '`setrblxupd #channel` — Route LIVE Roblox update alerts to a channel.',
+                    '`setbetarblx #channel` — Route Beta Roblox update alerts to a channel.',
+                    '`sethidrblx #channel` — Route Hidden Roblox version alerts to a channel.'
                 ]
             },
             {
@@ -442,7 +625,7 @@ client.on('messageCreate', async (message) => {
                 lines: [
                     '`check [name]` — Query structural exploit bypass signatures.',
                     '`statusvc` — Automatically setup channels layout to track bot status.',
-                    '`maintenance @bot [true/false]` — Toggle Maintenance mode for this bot **or crashy**.'
+                    '`maintenance @bot [true/false]` — Toggle Maintenance mode for this bot **or crashy** (restricted).'
                 ]
             },
             {
