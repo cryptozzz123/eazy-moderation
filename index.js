@@ -47,7 +47,7 @@ let versionConfig = {
     }
 };
 
-const BOT_VERSION = '1.8.3'; 
+const BOT_VERSION = '1.9.0'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -516,6 +516,40 @@ client.on('messageCreate', async (message) => {
         return sendSuccess(message, `${labelMap[type]} alerts will now be sent to ${targetChannel}.`);
     }
 
+    // --- !sendlive / !sendbeta / !sendhid Commands (owner-only manual test dispatch) ---
+    if (command === 'sendlive' || command === 'sendbeta' || command === 'sendhid') {
+        if (message.author.id !== MAINTENANCE_USER_ID) {
+            return sendError(message, "You are not authorized to run this command.");
+        }
+
+        const typeMap = { sendlive: 'live', sendbeta: 'beta', sendhid: 'hidden' };
+        const labelMap = { live: 'LIVE', beta: 'Beta', hidden: 'Hidden' };
+        const type = typeMap[command];
+
+        if (!versionConfig.robloxChannels?.[type]) {
+            return sendError(message, `No ${labelMap[type]} channel is configured yet. Use \`!${type === 'live' ? 'setrblxupd' : type === 'beta' ? 'setbetarblx' : 'sethidrblx'} #channel\` first.`);
+        }
+
+        try {
+            if (type === 'hidden') {
+                const entry = await getLatestHiddenWindowsEntry();
+                if (!entry) return sendError(message, "Couldn't find a hidden WindowsPlayer entry in DeployHistory.txt right now.");
+                await sendRobloxAlertToChannel('hidden', entry.versionLabel, entry.dateStr);
+            } else {
+                const endpoint = type === 'live' ? 'https://weao.xyz/api/versions/current' : 'https://weao.xyz/api/versions/future';
+                const res = await fetch(endpoint);
+                if (!res.ok) return sendError(message, "WEAO API didn't respond. Try again in a moment.");
+                const data = await res.json();
+                if (!data.Windows) return sendError(message, "No Windows version data available from WEAO right now.");
+                await sendRobloxAlertToChannel(type, data.Windows, data.WindowsDate || new Date().toLocaleString());
+            }
+            return sendSuccess(message, `Test ${labelMap[type]} alert sent to the configured channel.`);
+        } catch (err) {
+            console.error(`⚠️ Manual ${type} test dispatch failed:`, err.message);
+            return sendError(message, "Something went wrong sending the test alert.");
+        }
+    }
+
     // --- !afk Command Framework ---
     if (command === 'afk') {
         const afkReason = args.join(" ") || "Away from keyboard";
@@ -617,7 +651,8 @@ client.on('messageCreate', async (message) => {
                     '`futurever` — Query upcoming deployment configurations.',
                     '`setrblxupd #channel` — Route LIVE Roblox update alerts to a channel.',
                     '`setbetarblx #channel` — Route Beta Roblox update alerts to a channel.',
-                    '`sethidrblx #channel` — Route Hidden Roblox version alerts to a channel.'
+                    '`sethidrblx #channel` — Route Hidden Roblox version alerts to a channel.',
+                    '`sendlive / sendbeta / sendhid` — Manually test-send an alert (owner-only).'
                 ]
             },
             {
