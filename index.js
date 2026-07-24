@@ -6,7 +6,7 @@ const {
     // If this bot's installed discord.js doesn't have them, they'll simply be undefined here
     // and the code below automatically falls back to normal embeds — nothing breaks.
     ContainerBuilder, TextDisplayBuilder, SeparatorBuilder, SeparatorSpacingSize, MessageFlags,
-    MediaGalleryBuilder, MediaGalleryItemBuilder, AttachmentBuilder
+    MediaGalleryBuilder, MediaGalleryItemBuilder, AttachmentBuilder, SectionBuilder
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -38,6 +38,7 @@ const CONFIG_PATH = path.join(__dirname, 'version_config.json');
 let versionConfig = {
     channels: [], 
     robloxChannels: { live: null, beta: null, hidden: null }, // Channels set via !setrblxupd / !setbetarblx / !sethidrblx
+    updateChannel: null, // Channel set via !setupdatechannel — where !postupdate announcements go
     statusVCs: { crashy: null, eazy: null }, // Stores the auto-created VC IDs
     maintenanceMode: { eazy: false, crashy: false },
     lastVersions: {
@@ -47,7 +48,7 @@ let versionConfig = {
     }
 };
 
-const BOT_VERSION = '1.9.0'; 
+const BOT_VERSION = '1.10.0'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -550,6 +551,107 @@ client.on('messageCreate', async (message) => {
         }
     }
 
+    // --- !setupdatechannel Command (where !postupdate announcements are sent) ---
+    if (command === 'setupdatechannel') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return sendError(message, "You need the `Manage Channels` permission to run this command.");
+        }
+
+        const targetChannel = message.mentions.channels.first();
+        if (!targetChannel || !targetChannel.isTextBased()) {
+            return sendError(message, "Please mention a valid text channel. Usage: `!setupdatechannel #channel`");
+        }
+
+        versionConfig.updateChannel = targetChannel.id;
+        saveConfig();
+
+        try {
+            const confirmText = `✅ **This channel is now linked for Bot Update announcements.**\nRun \`!postupdate\` here going forward to post here automatically.`;
+            if (ContainerBuilder && TextDisplayBuilder && MessageFlags) {
+                const confirmContainer = new ContainerBuilder();
+                confirmContainer.addTextDisplayComponents(new TextDisplayBuilder().setContent(confirmText));
+                await targetChannel.send({ components: [confirmContainer], flags: MessageFlags.IsComponentsV2 });
+            } else {
+                await targetChannel.send({ embeds: [new EmbedBuilder().setColor(0x2ECC71).setDescription(confirmText)] });
+            }
+        } catch (e) {
+            console.error(`⚠️ Failed to send confirmation to channel ${targetChannel.id}:`, e.message);
+        }
+
+        return sendSuccess(message, `Bot Update announcements will now be sent to ${targetChannel}.`);
+    }
+
+    // --- !postupdate Command (owner-only — posts a Bot Update announcement card) ---
+    if (command === 'postupdate') {
+        if (message.author.id !== MAINTENANCE_USER_ID) {
+            return sendError(message, "You are not authorized to run this command.");
+        }
+
+        if (!versionConfig.updateChannel) {
+            return sendError(message, "No update channel is configured yet. Use `!setupdatechannel #channel` first.");
+        }
+
+        const changelogText = args.join(" ");
+        if (!changelogText) {
+            return sendError(message, "Please include changelog text. Usage: `!postupdate <changelog text>`");
+        }
+
+        const targetChannel = await client.channels.fetch(versionConfig.updateChannel).catch(() => null);
+        if (!targetChannel?.isTextBased()) {
+            return sendError(message, "Couldn't reach the configured update channel — it may have been deleted.");
+        }
+
+        const statusText = versionConfig.maintenanceMode?.eazy
+            ? 'Maintenance 🟠'
+            : (client.ws.ping > 0 && client.ws.ping < 1200 ? 'Working 🟢' : 'Down 🔴');
+        const unixNow = Math.floor(Date.now() / 1000);
+        const cardContent = `# - Bot Update\n- ${client.user.username}\n- Status/Compatibility : ${statusText}\n- Version : \`v${BOT_VERSION}\`\n- Update Date : <t:${unixNow}:F>\n# CHANGELOGS\n${changelogText}`;
+
+        const updateBannerPath = path.join(__dirname, 'update_banner.png');
+        const hasUpdateBanner = !!AttachmentBuilder && fs.existsSync(updateBannerPath);
+
+        try {
+            if (ContainerBuilder && SectionBuilder && TextDisplayBuilder && MediaGalleryBuilder && MediaGalleryItemBuilder && MessageFlags) {
+                const container = new ContainerBuilder();
+                const section = new SectionBuilder()
+                    .addTextDisplayComponents(new TextDisplayBuilder().setContent(cardContent))
+                    .setButtonAccessory(
+                        new ButtonBuilder().setLabel('Get The Bot Now').setStyle(ButtonStyle.Link).setURL(
+                            'https://discord.com/oauth2/authorize?client_id=1513386994510598144&scope=bot&permissions=8'
+                        )
+                    );
+                container.addSectionComponents(section);
+
+                const sendOptions = { components: [container], flags: MessageFlags.IsComponentsV2 };
+                if (hasUpdateBanner) {
+                    container.addMediaGalleryComponents(
+                        new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://update_banner.png'))
+                    );
+                    sendOptions.files = [new AttachmentBuilder(updateBannerPath, { name: 'update_banner.png' })];
+                }
+
+                await targetChannel.send(sendOptions);
+            } else {
+                const embed = new EmbedBuilder().setDescription(cardContent);
+                const btnRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setLabel('Get The Bot Now').setStyle(ButtonStyle.Link).setURL(
+                        'https://discord.com/oauth2/authorize?client_id=1513386994510598144&scope=bot&permissions=8'
+                    )
+                );
+                const sendOptions = { embeds: [embed], components: [btnRow] };
+                if (hasUpdateBanner) {
+                    embed.setImage('attachment://update_banner.png');
+                    sendOptions.files = [new AttachmentBuilder(updateBannerPath, { name: 'update_banner.png' })];
+                }
+                await targetChannel.send(sendOptions);
+            }
+            return sendSuccess(message, `Bot Update announcement posted to ${targetChannel}.`);
+        } catch (err) {
+            console.error("⚠️ Failed to post bot update announcement:", err.message);
+            return sendError(message, "Something went wrong posting the update announcement.");
+        }
+    }
+
     // --- !afk Command Framework ---
     if (command === 'afk') {
         const afkReason = args.join(" ") || "Away from keyboard";
@@ -652,7 +754,9 @@ client.on('messageCreate', async (message) => {
                     '`setrblxupd #channel` — Route LIVE Roblox update alerts to a channel.',
                     '`setbetarblx #channel` — Route Beta Roblox update alerts to a channel.',
                     '`sethidrblx #channel` — Route Hidden Roblox version alerts to a channel.',
-                    '`sendlive / sendbeta / sendhid` — Manually test-send an alert (owner-only).'
+                    '`sendlive / sendbeta / sendhid` — Manually test-send an alert (owner-only).',
+                    '`setupdatechannel #channel` — Route Bot Update announcements to a channel.',
+                    '`postupdate <changelog>` — Post a Bot Update announcement (owner-only).'
                 ]
             },
             {
