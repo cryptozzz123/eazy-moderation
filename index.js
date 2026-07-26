@@ -39,6 +39,7 @@ let versionConfig = {
     channels: [], 
     robloxChannels: { live: null, beta: null, hidden: null }, // Channels set via !setrblxupd / !setbetarblx / !sethidrblx
     updateChannel: null, // Channel set via !setupdatechannel — where !postupdate announcements go
+    statusUpdateChannel: null, // Channel set via !setstatusupd — where !statusupd announcements go
     statusVCs: { crashy: null, eazy: null }, // Stores the auto-created VC IDs
     maintenanceMode: { eazy: false, crashy: false },
     lastVersions: {
@@ -48,7 +49,7 @@ let versionConfig = {
     }
 };
 
-const BOT_VERSION = '1.10.0'; 
+const BOT_VERSION = '1.11.0'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -652,6 +653,90 @@ client.on('messageCreate', async (message) => {
         }
     }
 
+    // --- !setstatusupd Command (where !statusupd announcements are sent) ---
+    if (command === 'setstatusupd') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return sendError(message, "You need the `Manage Channels` permission to run this command.");
+        }
+
+        const targetChannel = message.mentions.channels.first();
+        if (!targetChannel || !targetChannel.isTextBased()) {
+            return sendError(message, "Please mention a valid text channel. Usage: `!setstatusupd #channel`");
+        }
+
+        versionConfig.statusUpdateChannel = targetChannel.id;
+        saveConfig();
+
+        try {
+            const confirmText = `✅ **This channel is now linked for Status Update announcements.**\nRun \`!statusupd\` here going forward to post here automatically.`;
+            if (ContainerBuilder && TextDisplayBuilder && MessageFlags) {
+                const confirmContainer = new ContainerBuilder();
+                confirmContainer.addTextDisplayComponents(new TextDisplayBuilder().setContent(confirmText));
+                await targetChannel.send({ components: [confirmContainer], flags: MessageFlags.IsComponentsV2 });
+            } else {
+                await targetChannel.send({ embeds: [new EmbedBuilder().setColor(0x2ECC71).setDescription(confirmText)] });
+            }
+        } catch (e) {
+            console.error(`⚠️ Failed to send confirmation to channel ${targetChannel.id}:`, e.message);
+        }
+
+        return sendSuccess(message, `Status Update announcements will now be sent to ${targetChannel}.`);
+    }
+
+    // --- !statusupd Command (owner-only — posts a bot status announcement card) ---
+    if (command === 'statusupd') {
+        if (message.author.id !== MAINTENANCE_USER_ID) {
+            return sendError(message, "You are not authorized to run this command.");
+        }
+
+        const botMention = message.mentions.users.first();
+        if (!botMention || (botMention.id !== client.user.id && botMention.id !== CRASHY_USER_ID)) {
+            return sendError(message, "You must ping a tracked bot (this bot or crashy). Usage: `!statusupd @bot <maintenance/working/offline> <Dev's Response>`");
+        }
+
+        const statusMap = {
+            maintenance: { label: 'Maintenance', emoji: '🟠' },
+            working: { label: 'Working', emoji: '🟢' },
+            offline: { label: 'Down', emoji: '🔴' }
+        };
+        const statusArg = args[1]?.toLowerCase();
+        if (!statusMap[statusArg]) {
+            return sendError(message, "Invalid status. Use `maintenance`, `working`, or `offline`.");
+        }
+
+        const devResponse = args.slice(2).join(' ');
+        if (!devResponse) {
+            return sendError(message, "Please include a Dev's Response message. Usage: `!statusupd @bot <maintenance/working/offline> <Dev's Response>`");
+        }
+
+        if (!versionConfig.statusUpdateChannel) {
+            return sendError(message, "No status update channel is configured yet. Use `!setstatusupd #channel` first.");
+        }
+
+        const targetChannel = await client.channels.fetch(versionConfig.statusUpdateChannel).catch(() => null);
+        if (!targetChannel?.isTextBased()) {
+            return sendError(message, "Couldn't reach the configured status update channel — it may have been deleted.");
+        }
+
+        const botLabel = botMention.id === CRASHY_USER_ID ? 'crashy' : client.user.username;
+        const { label, emoji } = statusMap[statusArg];
+        const cardContent = `# ${botLabel} is now ${label}!\n\n- ${botLabel}\n- Status : ${label} ${emoji}\n\n**Dev's Response**\n${devResponse}`;
+
+        try {
+            if (ContainerBuilder && TextDisplayBuilder && MessageFlags) {
+                const container = new ContainerBuilder();
+                container.addTextDisplayComponents(new TextDisplayBuilder().setContent(cardContent));
+                await targetChannel.send({ components: [container], flags: MessageFlags.IsComponentsV2 });
+            } else {
+                await targetChannel.send({ embeds: [new EmbedBuilder().setDescription(cardContent)] });
+            }
+            return sendSuccess(message, `Status update posted to ${targetChannel}.`);
+        } catch (err) {
+            console.error("⚠️ Failed to post status update:", err.message);
+            return sendError(message, "Something went wrong posting the status update.");
+        }
+    }
+
     // --- !afk Command Framework ---
     if (command === 'afk') {
         const afkReason = args.join(" ") || "Away from keyboard";
@@ -756,7 +841,9 @@ client.on('messageCreate', async (message) => {
                     '`sethidrblx #channel` — Route Hidden Roblox version alerts to a channel.',
                     '`sendlive / sendbeta / sendhid` — Manually test-send an alert (owner-only).',
                     '`setupdatechannel #channel` — Route Bot Update announcements to a channel.',
-                    '`postupdate <changelog>` — Post a Bot Update announcement (owner-only).'
+                    '`postupdate <changelog>` — Post a Bot Update announcement (owner-only).',
+                    '`setstatusupd #channel` — Route Status Update announcements to a channel.',
+                    '`statusupd @bot <maintenance/working/offline> <response>` — Post a status update (owner-only).'
                 ]
             },
             {
