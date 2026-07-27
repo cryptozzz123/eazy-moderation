@@ -40,6 +40,7 @@ let versionConfig = {
     robloxChannels: { live: null, beta: null, hidden: null }, // Channels set via !setrblxupd / !setbetarblx / !sethidrblx
     updateChannel: null, // Channel set via !setupdatechannel — where !postupdate announcements go
     statusUpdateChannel: null, // Channel set via !setstatusupd — where !statusupd announcements go
+    announceChannel: null, // Channel set via !setannounce — where !announce messages go
     statusVCs: { crashy: null, eazy: null }, // Stores the auto-created VC IDs
     maintenanceMode: { eazy: false, crashy: false },
     lastVersions: {
@@ -49,7 +50,7 @@ let versionConfig = {
     }
 };
 
-const BOT_VERSION = '1.11.0'; 
+const BOT_VERSION = '1.12.0'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -412,6 +413,81 @@ client.on('messageCreate', async (message) => {
 
     globalBotLogs.push({ user: message.author.tag, command: `${prefix}${command} ${args.join(" ")}`.trim(), timestamp: new Date().toLocaleTimeString() });
     if (globalBotLogs.length > 150) globalBotLogs.shift();
+
+    // --- !setannounce Command ---
+    if (command === 'setannounce') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return sendError(message, "You need the `Manage Channels` permission to run this command.");
+        }
+
+        const targetChannel = message.mentions.channels.first();
+        if (!targetChannel || !targetChannel.isTextBased()) {
+            return sendError(message, "Please mention a valid text channel. Usage: `!setannounce #channel`");
+        }
+
+        versionConfig.announceChannel = targetChannel.id;
+        saveConfig();
+
+        try {
+            const confirmText = `✅ **This channel is now set to receive Further Announcements.**`;
+            if (ContainerBuilder && TextDisplayBuilder && MessageFlags) {
+                const confirmContainer = new ContainerBuilder();
+                confirmContainer.addTextDisplayComponents(new TextDisplayBuilder().setContent(confirmText));
+                await targetChannel.send({ components: [confirmContainer], flags: MessageFlags.IsComponentsV2 });
+            } else {
+                await targetChannel.send({ embeds: [new EmbedBuilder().setColor(0x2ECC71).setDescription(confirmText)] });
+            }
+        } catch (e) {
+            console.error(`⚠️ Failed to send confirmation to channel ${targetChannel.id}:`, e.message);
+        }
+
+        return sendSuccess(message, `Announcement channel set to ${targetChannel}.`);
+    }
+
+    // --- !announce Command ---
+    if (command === 'announce') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+            return sendError(message, "You do not have permission to run this command.");
+        }
+
+        if (!versionConfig.announceChannel) {
+            return sendError(message, "No announcement channel is set yet. Use `!setannounce #channel` first.");
+        }
+
+        const text = args.join(" ");
+        if (!text) {
+            return sendError(message, "Please provide the text you want to announce. Usage: `!announce [text]`");
+        }
+
+        const targetChannel = await client.channels.fetch(versionConfig.announceChannel).catch(() => null);
+        if (!targetChannel?.isTextBased()) {
+            return sendError(message, "Couldn't reach the configured announcement channel — it may have been deleted.");
+        }
+
+        const unixNow = Math.floor(Date.now() / 1000);
+        const payload = {
+            flags: 32768,
+            components: [
+                {
+                    type: 17,
+                    components: [
+                        {
+                            type: 10,
+                            content: `# ANNOUNCEMENT\n${text}\n\nAnnounced On : <t:${unixNow}:f>`
+                        }
+                    ]
+                }
+            ]
+        };
+
+        try {
+            await targetChannel.send(payload);
+            return sendSuccess(message, `Announcement posted to ${targetChannel}.`);
+        } catch (err) {
+            console.error("⚠️ Failed to send announcement payload:", err.message);
+            return sendError(message, "Something went wrong sending the announcement payload.");
+        }
+    }
 
     // --- !maintenance Command Framework ---
     if (command === 'maintenance') {
@@ -843,7 +919,9 @@ client.on('messageCreate', async (message) => {
                     '`setupdatechannel #channel` — Route Bot Update announcements to a channel.',
                     '`postupdate <changelog>` — Post a Bot Update announcement (owner-only).',
                     '`setstatusupd #channel` — Route Status Update announcements to a channel.',
-                    '`statusupd @bot <maintenance/working/offline> <response>` — Post a status update (owner-only).'
+                    '`statusupd @bot <maintenance/working/offline> <response>` — Post a status update (owner-only).',
+                    '`setannounce #channel` — Route Announcements to a channel.',
+                    '`announce [text]` — Post an announcement using raw Components V2 payload.'
                 ]
             },
             {
