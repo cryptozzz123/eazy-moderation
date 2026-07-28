@@ -2,22 +2,19 @@ require('dotenv').config();
 const {
     Client, GatewayIntentBits, PermissionFlagsBits, EmbedBuilder, Collection,
     ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType,
-    // The following only exist on newer discord.js versions (Components V2 / "Containers").
-    // If this bot's installed discord.js doesn't have them, they'll simply be undefined here
-    // and the code below automatically falls back to normal embeds — nothing breaks.
     ContainerBuilder, TextDisplayBuilder, SeparatorBuilder, SeparatorSpacingSize, MessageFlags,
     MediaGalleryBuilder, MediaGalleryItemBuilder, AttachmentBuilder, SectionBuilder
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
-// Shared reference to the "crashy" bot's Discord user ID (used for presence + maintenance checks)
+// Shared reference to the "crashy" bot's Discord user ID
 const CRASHY_USER_ID = '1512062436411183114';
 
-// Only this user may toggle !maintenance
+// Only this user may toggle !maintenance, !postupdate, !statusupd, and test commands
 const MAINTENANCE_USER_ID = '1161980923168952410';
 
-// Banner images for the Roblox LIVE / Beta / Hidden alert cards (!setrblxupd / !setbetarblx / !sethidrblx)
+// Banner images for Roblox LIVE / Beta / Hidden alert cards
 const RBLX_LIVE_BANNER_URL = 'https://cdn.discordapp.com/attachments/1499365932685070486/1529518568528674897/LIVE.png?ex=6a62e36b&is=6a6191eb&hm=6a89f509738444f7b5a66499dc9753c3b82106ffb16baff34fdae72014534dee&';
 const RBLX_BETA_BANNER_URL = 'https://cdn.discordapp.com/attachments/1499365932685070486/1529257162436640778/BETA.png?ex=6a634177&is=6a61eff7&hm=3d590db7d58b0cdbd6340a8c5196a227e7de398bf3f02af330c25cad39688eaf&';
 const RBLX_HIDDEN_BANNER_URL = 'https://cdn.discordapp.com/attachments/1499365932685070486/1529458299467202730/HIDDEN.png?ex=6a62ab4a&is=6a6159ca&hm=f08b95e7e1bbe2bfe1bfb66fb1aa1dc15b5b865d29d85d1f6005179d555b6e33&';
@@ -37,11 +34,11 @@ const CONFIG_PATH = path.join(__dirname, 'version_config.json');
 
 let versionConfig = {
     channels: [], 
-    robloxChannels: { live: null, beta: null, hidden: null }, // Channels set via !setrblxupd / !setbetarblx / !sethidrblx
-    updateChannel: null, // Channel set via !setupdatechannel — where !postupdate announcements go
-    statusUpdateChannel: null, // Channel set via !setstatusupd — where !statusupd announcements go
-    announceChannel: null, // Channel set via !setannounce — where !announce messages go
-    statusVCs: { crashy: null, eazy: null }, // Stores the auto-created VC IDs
+    robloxChannels: { live: null, beta: null, hidden: null },
+    updateChannel: null,
+    statusUpdateChannel: null,
+    announceChannel: null,
+    statusVCs: { crashy: null, eazy: null },
     maintenanceMode: { eazy: false, crashy: false },
     lastVersions: {
         live: null,
@@ -61,17 +58,13 @@ if (fs.existsSync(CONFIG_PATH)) {
     }
 }
 
-// Backwards-compatible migration: older configs stored maintenanceMode as a single true/false
-// for this bot only. Upgrade it to the new per-bot object shape without losing that value.
+// Backwards-compatible migrations
 if (typeof versionConfig.maintenanceMode === 'boolean') {
     versionConfig.maintenanceMode = { eazy: versionConfig.maintenanceMode, crashy: false };
 } else if (!versionConfig.maintenanceMode || typeof versionConfig.maintenanceMode !== 'object') {
     versionConfig.maintenanceMode = { eazy: false, crashy: false };
 }
 
-// Backwards-compatible migration: lastVersions used to default to empty objects that were
-// never actually wired up (there was no command yet to set a destination channel). Reset any
-// leftover object shape to null so the live/beta/hidden change-detection works correctly.
 if (versionConfig.lastVersions) {
     for (const key of ['live', 'beta', 'hidden']) {
         if (versionConfig.lastVersions[key] && typeof versionConfig.lastVersions[key] === 'object') {
@@ -81,6 +74,9 @@ if (versionConfig.lastVersions) {
 }
 if (!versionConfig.robloxChannels || typeof versionConfig.robloxChannels !== 'object') {
     versionConfig.robloxChannels = { live: null, beta: null, hidden: null };
+}
+if (!versionConfig.statusVCs || typeof versionConfig.statusVCs !== 'object') {
+    versionConfig.statusVCs = { crashy: null, eazy: null };
 }
 
 function saveConfig() {
@@ -128,9 +124,6 @@ client.once('ready', () => {
 
 // Auto-updates channel names dynamically based on live status
 async function updateStatusVoiceChannels() {
-    if (!client.guilds.cache.first()) return;
-    const defaultGuild = client.guilds.cache.first();
-
     let eazyText = "Eazy Moderation : Working 🟢";
     if (versionConfig.maintenanceMode?.eazy) {
         eazyText = "Eazy Moderation : Maintenance 🟠";
@@ -142,12 +135,15 @@ async function updateStatusVoiceChannels() {
     if (versionConfig.maintenanceMode?.crashy) {
         crashyText = "crashy : Maintenance 🟠";
     } else {
-        try {
-            const crashyMember = await defaultGuild.members.fetch(CRASHY_USER_ID).catch(() => null);
-            if (crashyMember?.presence?.status && crashyMember.presence.status !== 'offline') {
-                crashyText = "crashy : Working 🟢";
-            }
-        } catch {}
+        for (const guild of client.guilds.cache.values()) {
+            try {
+                const crashyMember = await guild.members.fetch(CRASHY_USER_ID).catch(() => null);
+                if (crashyMember?.presence?.status && crashyMember.presence.status !== 'offline') {
+                    crashyText = "crashy : Working 🟢";
+                    break;
+                }
+            } catch {}
+        }
     }
 
     if (versionConfig.statusVCs?.eazy) {
@@ -161,7 +157,7 @@ async function updateStatusVoiceChannels() {
 }
 
 async function checkRobloxVersions() {
-    // --- LIVE ---
+    // LIVE
     if (versionConfig.robloxChannels?.live) {
         try {
             const res = await fetch('https://weao.xyz/api/versions/current');
@@ -180,7 +176,7 @@ async function checkRobloxVersions() {
         } catch (err) { console.error("❌ Error polling live endpoint:", err.message); }
     }
 
-    // --- BETA / FUTURE ---
+    // BETA / FUTURE
     if (versionConfig.robloxChannels?.beta) {
         try {
             const res = await fetch('https://weao.xyz/api/versions/future');
@@ -199,7 +195,7 @@ async function checkRobloxVersions() {
         } catch (err) { console.error("❌ Error polling future endpoint:", err.message); }
     }
 
-    // --- HIDDEN (WEAO doesn't expose this — pulled directly from Roblox's own DeployHistory.txt) ---
+    // HIDDEN
     if (versionConfig.robloxChannels?.hidden) {
         try {
             const entry = await getLatestHiddenWindowsEntry();
@@ -218,16 +214,10 @@ async function checkRobloxVersions() {
     }
 }
 
-/**
- * "Hidden" builds don't come from WEAO's API — they only ever show up in Roblox's own
- * DeployHistory.txt as a "version-hidden" entry (Roblox intentionally redacts the real hash).
- * We pull the human-readable build number out of that entry's "file version" field instead.
- */
 async function getLatestHiddenWindowsEntry() {
     const res = await fetch('https://setup.rbxcdn.com/DeployHistory.txt');
     if (!res.ok) return null;
 
-    // DeployHistory.txt is append-only, so the newest matching entry is at the bottom.
     const lines = (await res.text()).split('\n');
     let latestLine = null;
     for (let i = lines.length - 1; i >= 0; i--) {
@@ -240,11 +230,8 @@ async function getLatestHiddenWindowsEntry() {
 
     const dateMatch = latestLine.match(/version-hidden at ([^,]+),/);
     const fileVerMatch = latestLine.match(/file version:\s*([\d,\s]+),\s*git hash:/);
-
     const dateStr = dateMatch ? dateMatch[1].trim() : 'Unknown';
 
-    // Prefer the reconstructed build number (e.g. "0.731.0.7310942"); fall back to labeling
-    // it literally as "version-hidden" if Roblox ever omits that field too.
     let versionLabel = 'version-hidden';
     if (fileVerMatch) {
         const parts = fileVerMatch[1].split(',').map(p => p.trim()).filter(Boolean);
@@ -254,11 +241,6 @@ async function getLatestHiddenWindowsEntry() {
     return { versionLabel, dateStr };
 }
 
-/**
- * Builds the Components V2 "container" alert card (Discohook-style, no accent color) for a
- * Roblox live/beta/hidden update — falling back to a classic embed automatically if this
- * bot's installed discord.js doesn't support Components V2.
- */
 async function buildRobloxAlertPayload(type, versionString, dateStr) {
     let title, desc, banner;
     if (type === 'live') {
@@ -277,8 +259,6 @@ async function buildRobloxAlertPayload(type, versionString, dateStr) {
 
     const fieldsText = `**Platform:** Windows\n**Roblox Version:** \`${versionString}\`\n**Detected:** ${dateStr}`;
 
-    // Hidden builds aren't publicly downloadable (Roblox intentionally redacts the real hash),
-    // so only LIVE and Beta get a Download button.
     let downloadRow = null;
     if (type !== 'hidden') {
         const downloadUrl = `https://rdd.weao.xyz/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(versionString)}&includeLauncher=true&parallelDownloads=true`;
@@ -324,10 +304,6 @@ async function sendRobloxAlertToChannel(type, versionString, dateStr) {
     }
 }
 
-/**
- * Small confirmation card sent into a channel the moment it's linked via !setrblxupd /
- * !setbetarblx / !sethidrblx — so there's no need to run any more commands to verify it.
- */
 async function buildRobloxConfirmationPayload(type) {
     const labelMap = { live: 'LIVE Roblox Updates', beta: 'Beta Roblox Updates', hidden: 'Hidden Roblox Versions' };
     const text = `✅ **This channel is now linked for ${labelMap[type]}.**\nAlerts will be posted here automatically going forward.`;
@@ -349,7 +325,7 @@ client.on('messageCreate', async (message) => {
 
     const prefix = '!';
 
-    // --- Automatic UNAFK Handling ---
+    // UNAFK Handling
     if (afkUsers.has(message.author.id) && !message.content.startsWith(`${prefix}afk`)) {
         const afkData = afkUsers.get(message.author.id);
         afkUsers.delete(message.author.id);
@@ -372,7 +348,7 @@ client.on('messageCreate', async (message) => {
         setTimeout(() => welcomeBack.delete().catch(() => {}), 5000);
     }
 
-    // --- Dynamic Multi-User AFK Intercept Monitor ---
+    // AFK Intercept
     if (message.mentions.users.size > 0) {
         message.mentions.users.forEach((user) => {
             if (afkUsers.has(user.id)) {
@@ -414,7 +390,7 @@ client.on('messageCreate', async (message) => {
     globalBotLogs.push({ user: message.author.tag, command: `${prefix}${command} ${args.join(" ")}`.trim(), timestamp: new Date().toLocaleTimeString() });
     if (globalBotLogs.length > 150) globalBotLogs.shift();
 
-    // --- !setannounce Command ---
+    // !setannounce Command (PERSISTED NOW)
     if (command === 'setannounce') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need the `Manage Channels` permission to run this command.");
@@ -444,7 +420,7 @@ client.on('messageCreate', async (message) => {
         return sendSuccess(message, `Announcement channel set to ${targetChannel}.`);
     }
 
-    // --- !announce Command ---
+    // !announce Command
     if (command === 'announce') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
             return sendError(message, "You do not have permission to run this command.");
@@ -489,7 +465,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- !maintenance Command Framework ---
+    // !maintenance Command
     if (command === 'maintenance') {
         if (message.author.id !== MAINTENANCE_USER_ID) {
             return sendError(message, "You are not authorized to run this command.");
@@ -521,7 +497,7 @@ client.on('messageCreate', async (message) => {
         );
     }
 
-    // --- !statusvc Command (Creates Voice Channels Directly Without Category) ---
+    // !statusvc Command (REVISED & FIXED RE-CREATION/PERSISTENCE)
     if (command === 'statusvc') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need the `Manage Channels` permission to run this command.");
@@ -530,7 +506,16 @@ client.on('messageCreate', async (message) => {
         try {
             const guild = message.guild;
 
-            // Setup the lock configurations so users cannot join
+            // Delete old configured status VCs if they still exist to prevent duplicates
+            if (versionConfig.statusVCs?.crashy) {
+                const oldCrashy = await guild.channels.fetch(versionConfig.statusVCs.crashy).catch(() => null);
+                if (oldCrashy) await oldCrashy.delete().catch(() => {});
+            }
+            if (versionConfig.statusVCs?.eazy) {
+                const oldEazy = await guild.channels.fetch(versionConfig.statusVCs.eazy).catch(() => null);
+                if (oldEazy) await oldEazy.delete().catch(() => {});
+            }
+
             const channelPermissions = [
                 {
                     id: guild.roles.everyone.id,
@@ -539,7 +524,6 @@ client.on('messageCreate', async (message) => {
                 }
             ];
 
-            // Create the channels straight into the server channel tree
             const crashyVC = await guild.channels.create({
                 name: 'crashy : Working 🟢',
                 type: ChannelType.GuildVoice,
@@ -552,21 +536,22 @@ client.on('messageCreate', async (message) => {
                 permissionOverwrites: channelPermissions
             });
 
-            // Save configuration references
-            versionConfig.statusVCs.crashy = crashyVC.id;
-            versionConfig.statusVCs.eazy = eazyVC.id;
+            versionConfig.statusVCs = {
+                crashy: crashyVC.id,
+                eazy: eazyVC.id
+            };
             saveConfig();
 
             await updateStatusVoiceChannels();
 
-            return sendSuccess(message, "Successfully created locked status channels directly in the server list!");
+            return sendSuccess(message, "Successfully created and linked locked status voice channels!");
         } catch (err) {
             console.error(err);
             return sendError(message, "Failed to create status channels. Check my server permissions hierarchy.");
         }
     }
 
-    // --- !setrblxupd / !setbetarblx / !sethidrblx Commands (Roblox update channel routing) ---
+    // !setrblxupd / !setbetarblx / !sethidrblx Commands (PERSISTED NOW)
     if (command === 'setrblxupd' || command === 'setbetarblx' || command === 'sethidrblx') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need the `Manage Channels` permission to run this command.");
@@ -594,7 +579,7 @@ client.on('messageCreate', async (message) => {
         return sendSuccess(message, `${labelMap[type]} alerts will now be sent to ${targetChannel}.`);
     }
 
-    // --- !sendlive / !sendbeta / !sendhid Commands (owner-only manual test dispatch) ---
+    // !sendlive / !sendbeta / !sendhid Commands
     if (command === 'sendlive' || command === 'sendbeta' || command === 'sendhid') {
         if (message.author.id !== MAINTENANCE_USER_ID) {
             return sendError(message, "You are not authorized to run this command.");
@@ -628,7 +613,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- !setupdatechannel Command (where !postupdate announcements are sent) ---
+    // !setupdatechannel Command (PERSISTED NOW)
     if (command === 'setupdatechannel') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need the `Manage Channels` permission to run this command.");
@@ -658,7 +643,7 @@ client.on('messageCreate', async (message) => {
         return sendSuccess(message, `Bot Update announcements will now be sent to ${targetChannel}.`);
     }
 
-    // --- !postupdate Command (owner-only — posts a Bot Update announcement card) ---
+    // !postupdate Command
     if (command === 'postupdate') {
         if (message.author.id !== MAINTENANCE_USER_ID) {
             return sendError(message, "You are not authorized to run this command.");
@@ -729,7 +714,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- !setstatusupd Command (where !statusupd announcements are sent) ---
+    // !setstatusupd Command (PERSISTED NOW)
     if (command === 'setstatusupd') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need the `Manage Channels` permission to run this command.");
@@ -759,7 +744,7 @@ client.on('messageCreate', async (message) => {
         return sendSuccess(message, `Status Update announcements will now be sent to ${targetChannel}.`);
     }
 
-    // --- !statusupd Command (owner-only — posts a bot status announcement card) ---
+    // !statusupd Command
     if (command === 'statusupd') {
         if (message.author.id !== MAINTENANCE_USER_ID) {
             return sendError(message, "You are not authorized to run this command.");
@@ -813,7 +798,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- !afk Command Framework ---
+    // !afk Command
     if (command === 'afk') {
         const afkReason = args.join(" ") || "Away from keyboard";
         
@@ -856,7 +841,7 @@ client.on('messageCreate', async (message) => {
         });
     }
 
-    // --- !nickname Command Framework ---
+    // !nickname Command
     if (command === 'nickname' || command === 'nick') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageNicknames)) {
             return sendError(message, "You require the `Manage Nicknames` permission to execute this command.");
@@ -889,8 +874,6 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'help') {
-        // Command list, grouped by section — used to build either the Components V2
-        // "container" layout (if this discord.js supports it) or the classic embed.
         const helpSections = [
             {
                 title: '🧰 Core Utilities',
@@ -973,16 +956,12 @@ client.on('messageCreate', async (message) => {
             new ButtonBuilder().setLabel('Get Bot').setStyle(ButtonStyle.Link).setURL(INVITE_URL)
         );
 
-        // The HELP banner image (help_banner.png) lives right next to this file.
-        // If it's missing (e.g. not uploaded yet), everything falls back to the plain
-        // "# H E L P" text header instead of erroring out.
         const helpBannerPath = path.join(__dirname, 'help_banner.png');
         const hasHelpBanner = !!AttachmentBuilder && fs.existsSync(helpBannerPath);
         const helpBannerAttachment = hasHelpBanner
             ? new AttachmentBuilder(helpBannerPath, { name: 'help_banner.png' })
             : null;
 
-        // Original, guaranteed-compatible embed layout — used as the fallback.
         const sendClassicEmbed = () => {
             const cmdsEmbed = new EmbedBuilder()
                 .setColor(0x3498DB)
@@ -1000,9 +979,6 @@ client.on('messageCreate', async (message) => {
             });
         };
 
-        // Discohook-style "container" layout using Discord's Components V2. Only attempted
-        // if this bot's installed discord.js version actually exposes these builders — on
-        // older versions they're undefined and we go straight to the classic embed above.
         if (ContainerBuilder && TextDisplayBuilder && SeparatorBuilder && MessageFlags) {
             try {
                 const container = new ContainerBuilder();
@@ -1186,7 +1162,7 @@ client.on('messageCreate', async (message) => {
         if (!target.kickable) return sendError(message, "Cannot kick this profile target due to role hierarchies.");
         const reason = args.slice(1).join(" ") || "None specified";
         await target.kick(reason);
-        return message.reply({ embeds: [new EmbedBuilder().setColor(0xE74C3C).setTitle('👢 Member Kicked').setDescription(`**User:** ${target.user.tag}\n**Reason:** *${reason}*`)] });
+        return message.reply({ embeds: [new EmbedBuilder().setColor(0xE74C3C).setTitle('BOOTED Member Kicked').setDescription(`**User:** ${target.user.tag}\n**Reason:** *${reason}*`)] });
     }
 
     if (command === 'ban') {
@@ -1238,7 +1214,6 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- !warn Command Integration ---
     if (command === 'warn') {
         if (!message.member.permissions.has(PermissionFlagsBits.ModerateMembers)) return sendError(message, "Missing structural permissions.");
         
@@ -1279,7 +1254,6 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // --- !warns Lookup Command ---
     if (command === 'warns') {
         const targetMember = message.mentions.members.first() || message.member;
         const logs = userWarnings.get(targetMember.id) || [];
@@ -1305,7 +1279,6 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [historyEmbed] });
     }
 
-    // --- !clearwarns Command ---
     if (command === 'clearwarns') {
         if (!message.member.permissions.has(PermissionFlagsBits.ModerateMembers)) return sendError(message, "Missing structural permissions.");
         
@@ -1320,7 +1293,6 @@ client.on('messageCreate', async (message) => {
         return sendSuccess(message, `Successfully reset and cleared warnings for **${targetMember.user.tag}**.`);
     }
 
-    // --- !slowmode Command Framework ---
     if (command === 'slowmode') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return sendError(message, "Missing \`Manage Channels\` permission flags.");
         
@@ -1348,7 +1320,6 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- !userinfo Command ---
     if (command === 'userinfo') {
         const targetMember = message.mentions.members.first() || message.member;
         const rolesList = targetMember.roles.cache
@@ -1372,7 +1343,6 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [infoEmbed] });
     }
 
-    // --- !serverinfo Command ---
     if (command === 'serverinfo') {
         const guild = message.guild;
         const totalMembers = guild.memberCount;
@@ -1397,7 +1367,6 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [serverEmbed] });
     }
 
-    // --- !members Command ---
     if (command === 'members') {
         return message.reply({
             embeds: [
@@ -1578,10 +1547,15 @@ client.on('messageCreate', async (message) => {
         if (versionConfig.maintenanceMode?.crashy) {
             crashyStatus = '🟠 Maintenance';
         } else {
-            try {
-                const crashy = await message.guild.members.fetch(CRASHY_USER_ID);
-                if (crashy?.presence?.status && crashy.presence.status !== 'offline') crashyStatus = '🟢 Working';
-            } catch {}
+            for (const guild of client.guilds.cache.values()) {
+                try {
+                    const crashy = await guild.members.fetch(CRASHY_USER_ID).catch(() => null);
+                    if (crashy?.presence?.status && crashy.presence.status !== 'offline') {
+                        crashyStatus = '🟢 Working';
+                        break;
+                    }
+                } catch {}
+            }
         }
 
         const statusEmbed = new EmbedBuilder()
