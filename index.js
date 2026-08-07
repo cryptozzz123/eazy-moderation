@@ -41,10 +41,17 @@ let versionConfig = {
     statusVCs: { crashy: null, eazy: null },
     maintenanceMode: { eazy: false, crashy: false },
     lastVersions: {
-        live: null,
-        beta: null,
-        hidden: null
+        live: { windows: null, mac: null, android: null, ios: null },
+        beta: { windows: null, mac: null },
+        hidden: { windows: null, mac: null }
     }
+};
+
+// Default per-platform shape for each update type — used to migrate old flat configs
+const LAST_VERSIONS_DEFAULTS = {
+    live: { windows: null, mac: null, android: null, ios: null },
+    beta: { windows: null, mac: null },
+    hidden: { windows: null, mac: null }
 };
 
 const BOT_VERSION = '1.12.0'; 
@@ -65,10 +72,16 @@ if (typeof versionConfig.maintenanceMode === 'boolean') {
     versionConfig.maintenanceMode = { eazy: false, crashy: false };
 }
 
-if (versionConfig.lastVersions) {
+if (!versionConfig.lastVersions || typeof versionConfig.lastVersions !== 'object') {
+    versionConfig.lastVersions = JSON.parse(JSON.stringify(LAST_VERSIONS_DEFAULTS));
+} else {
     for (const key of ['live', 'beta', 'hidden']) {
-        if (versionConfig.lastVersions[key] && typeof versionConfig.lastVersions[key] === 'object') {
-            versionConfig.lastVersions[key] = null;
+        const existing = versionConfig.lastVersions[key];
+        if (!existing || typeof existing !== 'object') {
+            // Old flat string/null value from a previous bot version — carry it over as the Windows entry
+            versionConfig.lastVersions[key] = { ...LAST_VERSIONS_DEFAULTS[key], windows: (typeof existing === 'string' ? existing : null) };
+        } else {
+            versionConfig.lastVersions[key] = { ...LAST_VERSIONS_DEFAULTS[key], ...existing };
         }
     }
 }
@@ -156,72 +169,104 @@ async function updateStatusVoiceChannels() {
     }
 }
 
+// Registers a freshly polled version string for a given (type, platform) pair and
+// fires an alert only when it actually changed — and never on the very first observation,
+// so newly-tracked platforms (e.g. Android/iOS) don't spam the channel on rollout/startup.
+async function registerVersionAndAlert(type, platform, versionString, dateStr) {
+    if (!versionString) return;
+    const current = versionConfig.lastVersions[type][platform];
+    if (current === versionString) return;
+
+    const isFirstRun = !current;
+    versionConfig.lastVersions[type][platform] = versionString;
+    saveConfig();
+
+    if (!isFirstRun) {
+        await sendRobloxAlertToChannel(type, platform, versionString, dateStr || new Date().toLocaleString());
+    }
+}
+
+// Same idea as registerVersionAndAlert, but for "hidden" entries where the unique signature
+// is versionLabel+date combined (mirrors the original hidden-version change detection).
+async function registerHiddenAndAlert(platform, versionLabel, dateStr) {
+    if (!versionLabel) return;
+    const signature = `${versionLabel}|${dateStr}`;
+    const current = versionConfig.lastVersions.hidden[platform];
+    if (current === signature) return;
+
+    const isFirstRun = !current;
+    versionConfig.lastVersions.hidden[platform] = signature;
+    saveConfig();
+
+    if (!isFirstRun) {
+        await sendRobloxAlertToChannel('hidden', platform, versionLabel, dateStr);
+    }
+}
+
 async function checkRobloxVersions() {
-    // LIVE
+    // LIVE — Windows, macOS, Android, iOS (all from the same /versions/current payload)
     if (versionConfig.robloxChannels?.live) {
         try {
             const res = await fetch('https://weao.xyz/api/versions/current');
             if (res.ok) {
                 const data = await res.json();
-                const liveVer = data.Windows || '';
-                if (liveVer && versionConfig.lastVersions.live !== liveVer) {
-                    const isFirstRun = !versionConfig.lastVersions.live;
-                    versionConfig.lastVersions.live = liveVer;
-                    saveConfig();
-                    if (!isFirstRun) {
-                        await sendRobloxAlertToChannel('live', liveVer, data.WindowsDate || new Date().toLocaleString());
-                    }
-                }
+                await registerVersionAndAlert('live', 'windows', data.Windows, data.WindowsDate);
+                await registerVersionAndAlert('live', 'mac', data.Mac, data.MacDate);
+                await registerVersionAndAlert('live', 'android', data.Android, data.AndroidDate);
+                await registerVersionAndAlert('live', 'ios', data.iOS, data.iOSDate);
             }
         } catch (err) { console.error("❌ Error polling live endpoint:", err.message); }
     }
 
-    // BETA / FUTURE
+    // BETA / FUTURE — Windows, macOS (WEAO's /versions/future only exposes these two)
     if (versionConfig.robloxChannels?.beta) {
         try {
             const res = await fetch('https://weao.xyz/api/versions/future');
             if (res.ok) {
                 const data = await res.json();
-                const betaVer = data.Windows || '';
-                if (betaVer && versionConfig.lastVersions.beta !== betaVer) {
-                    const isFirstRun = !versionConfig.lastVersions.beta;
-                    versionConfig.lastVersions.beta = betaVer;
-                    saveConfig();
-                    if (!isFirstRun) {
-                        await sendRobloxAlertToChannel('beta', betaVer, data.WindowsDate || new Date().toLocaleString());
-                    }
-                }
+                await registerVersionAndAlert('beta', 'windows', data.Windows, data.WindowsDate);
+                await registerVersionAndAlert('beta', 'mac', data.Mac, data.MacDate);
             }
         } catch (err) { console.error("❌ Error polling future endpoint:", err.message); }
     }
 
-    // HIDDEN
+    // HIDDEN — Windows, macOS (parsed straight from Roblox's own DeployHistory.txt files)
     if (versionConfig.robloxChannels?.hidden) {
         try {
-            const entry = await getLatestHiddenWindowsEntry();
-            if (entry) {
-                const signature = `${entry.versionLabel}|${entry.dateStr}`;
-                if (versionConfig.lastVersions.hidden !== signature) {
-                    const isFirstRun = !versionConfig.lastVersions.hidden;
-                    versionConfig.lastVersions.hidden = signature;
-                    saveConfig();
-                    if (!isFirstRun) {
-                        await sendRobloxAlertToChannel('hidden', entry.versionLabel, entry.dateStr);
-                    }
-                }
-            }
-        } catch (err) { console.error("❌ Error polling DeployHistory.txt:", err.message); }
+            const winEntry = await getLatestHiddenEntry('windows');
+            if (winEntry) await registerHiddenAndAlert('windows', winEntry.versionLabel, winEntry.dateStr);
+        } catch (err) { console.error("❌ Error polling Windows DeployHistory.txt:", err.message); }
+
+        try {
+            const macEntry = await getLatestHiddenEntry('mac');
+            if (macEntry) await registerHiddenAndAlert('mac', macEntry.versionLabel, macEntry.dateStr);
+        } catch (err) { console.error("❌ Error polling macOS DeployHistory.txt:", err.message); }
     }
 }
 
-async function getLatestHiddenWindowsEntry() {
-    const res = await fetch('https://setup.rbxcdn.com/DeployHistory.txt');
+// Roblox's own deploy-history files (the same source Roblox's bootstrappers rely on) for
+// resolving the current hidden ("version-hidden") build per platform.
+const DEPLOY_HISTORY_URLS = {
+    windows: 'https://setup.rbxcdn.com/DeployHistory.txt',
+    mac: 'https://setup.rbxcdn.com/mac/DeployHistory.txt'
+};
+const DEPLOY_HISTORY_BINARY = {
+    windows: 'WindowsPlayer',
+    mac: 'MacPlayer'
+};
+
+async function getLatestHiddenEntry(platform) {
+    const url = DEPLOY_HISTORY_URLS[platform];
+    const binaryName = DEPLOY_HISTORY_BINARY[platform];
+    if (!url || !binaryName) return null;
+
+    const res = await fetch(url);
     if (!res.ok) return null;
 
     const lines = (await res.text()).split('\n');
     let latestLine = null;
     for (let i = lines.length - 1; i >= 0; i--) {
-        if (lines[i].includes('WindowsPlayer') && lines[i].includes('version-hidden')) {
+        if (lines[i].includes(binaryName) && lines[i].includes('version-hidden')) {
             latestLine = lines[i];
             break;
         }
@@ -241,27 +286,31 @@ async function getLatestHiddenWindowsEntry() {
     return { versionLabel, dateStr };
 }
 
-async function buildRobloxAlertPayload(type, versionString, dateStr) {
+const PLATFORM_LABELS = { windows: 'Windows', mac: 'macOS', android: 'Android', ios: 'iOS' };
+const PLATFORM_BINARY_TYPES = { windows: 'WindowsPlayer', mac: 'MacPlayer' };
+
+async function buildRobloxAlertPayload(type, platform, versionString, dateStr) {
     let title, desc, banner;
+    const platformLabel = PLATFORM_LABELS[platform] || platform;
     if (type === 'live') {
         title = 'Live update detected!';
-        desc = 'A new ROBLOX LIVE version is out.';
+        desc = `A new ROBLOX LIVE version is out for ${platformLabel}.`;
         banner = RBLX_LIVE_BANNER_URL;
     } else if (type === 'beta') {
         title = 'Beta update detected!';
-        desc = 'A new ROBLOX beta build was detected before LIVE.';
+        desc = `A new ROBLOX beta build was detected before LIVE for ${platformLabel}.`;
         banner = RBLX_BETA_BANNER_URL;
     } else {
         title = 'Version-hidden detected!';
-        desc = 'A new WindowsPlayer version-hidden appeared in DeployHistory.';
+        desc = `A new ${PLATFORM_BINARY_TYPES[platform] || platformLabel} version-hidden appeared in DeployHistory.`;
         banner = RBLX_HIDDEN_BANNER_URL;
     }
 
-    const fieldsText = `**Platform:** Windows\n**Roblox Version:** \`${versionString}\`\n**Detected:** ${dateStr}`;
+    const fieldsText = `**Platform:** ${platformLabel}\n**Roblox Version:** \`${versionString}\`\n**Detected:** ${dateStr}`;
 
     let downloadRow = null;
-    if (type !== 'hidden') {
-        const downloadUrl = `https://rdd.weao.xyz/?channel=LIVE&binaryType=WindowsPlayer&version=${encodeURIComponent(versionString)}&includeLauncher=true&parallelDownloads=true`;
+    if (type !== 'hidden' && PLATFORM_BINARY_TYPES[platform]) {
+        const downloadUrl = `https://rdd.weao.xyz/?channel=LIVE&binaryType=${PLATFORM_BINARY_TYPES[platform]}&version=${encodeURIComponent(versionString)}&includeLauncher=true&parallelDownloads=true`;
         downloadRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setLabel('Download').setStyle(ButtonStyle.Link).setURL(downloadUrl)
         );
@@ -290,22 +339,26 @@ async function buildRobloxAlertPayload(type, versionString, dateStr) {
     return { embeds: [embed], components: downloadRow ? [downloadRow] : [] };
 }
 
-async function sendRobloxAlertToChannel(type, versionString, dateStr) {
+async function sendRobloxAlertToChannel(type, platform, versionString, dateStr) {
     const channelId = versionConfig.robloxChannels?.[type];
     if (!channelId) return;
     try {
         const channel = await client.channels.fetch(channelId).catch(() => null);
         if (channel?.isTextBased()) {
-            const payload = await buildRobloxAlertPayload(type, versionString, dateStr);
+            const payload = await buildRobloxAlertPayload(type, platform, versionString, dateStr);
             await channel.send(payload);
         }
     } catch (e) {
-        console.error(`⚠️ Failed to deliver Roblox ${type} alert to channel ${channelId}:`, e.message);
+        console.error(`⚠️ Failed to deliver Roblox ${type}/${platform} alert to channel ${channelId}:`, e.message);
     }
 }
 
 async function buildRobloxConfirmationPayload(type) {
-    const labelMap = { live: 'LIVE Roblox Updates', beta: 'Beta Roblox Updates', hidden: 'Hidden Roblox Versions' };
+    const labelMap = {
+        live: 'LIVE Roblox Updates (Windows, macOS, Android & iOS)',
+        beta: 'Beta Roblox Updates (Windows & macOS)',
+        hidden: 'Hidden Roblox Versions (Windows & macOS)'
+    };
     const text = `✅ **This channel is now linked for ${labelMap[type]}.**\nAlerts will be posted here automatically going forward.`;
 
     if (ContainerBuilder && TextDisplayBuilder && MessageFlags) {
@@ -595,16 +648,16 @@ client.on('messageCreate', async (message) => {
 
         try {
             if (type === 'hidden') {
-                const entry = await getLatestHiddenWindowsEntry();
+                const entry = await getLatestHiddenEntry('windows');
                 if (!entry) return sendError(message, "Couldn't find a hidden WindowsPlayer entry in DeployHistory.txt right now.");
-                await sendRobloxAlertToChannel('hidden', entry.versionLabel, entry.dateStr);
+                await sendRobloxAlertToChannel('hidden', 'windows', entry.versionLabel, entry.dateStr);
             } else {
                 const endpoint = type === 'live' ? 'https://weao.xyz/api/versions/current' : 'https://weao.xyz/api/versions/future';
                 const res = await fetch(endpoint);
                 if (!res.ok) return sendError(message, "WEAO API didn't respond. Try again in a moment.");
                 const data = await res.json();
                 if (!data.Windows) return sendError(message, "No Windows version data available from WEAO right now.");
-                await sendRobloxAlertToChannel(type, data.Windows, data.WindowsDate || new Date().toLocaleString());
+                await sendRobloxAlertToChannel(type, 'windows', data.Windows, data.WindowsDate || new Date().toLocaleString());
             }
             return sendSuccess(message, `Test ${labelMap[type]} alert sent to the configured channel.`);
         } catch (err) {
@@ -1436,7 +1489,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'chatlogs') {
-        if (!message.member.permissions.has(PermissionFlagsBits.MessageContent)) return sendError(message, "Missing rights.");
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) return sendError(message, "Missing rights.");
         const target = message.mentions.users.first();
         if (!target) return sendError(message, "Tag a target profile.");
         const records = runningChatLogs.get(target.id) || [];
