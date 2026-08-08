@@ -34,5 +34,13 @@
             "windows": "0.733.0.7330989|8/5/2026 10:25:03 AM",
             "mac": null
         }
+    },
+    "economy": {
+        "1161980923168952410": {
+            "coins": 187,
+            "lastDaily": 0,
+            "company": null,
+            "portfolio": {}
+        }
     }
 }
