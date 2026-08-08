@@ -9,13 +9,16 @@
     "statusUpdateChannel": null,
     "announceChannel": "1512289679376912484",
     "statusVCs": {
-        "crashy": "1535532212035002390",
-        "eazy": "1535532213930561608"
+        "crashy": "1535534948524752937",
+        "eazy": "1535534950227513446",
+        "banwave": "1535534952249167973"
     },
     "maintenanceMode": {
         "eazy": false,
         "crashy": false
     },
+    "banwaveOverride": null,
+    "banwaveOverrideExpiry": null,
     "lastVersions": {
         "live": {
             "windows": "version-d584fb6c717a43d9",
