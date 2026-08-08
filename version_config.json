@@ -20,15 +20,15 @@
         "live": {
             "windows": "version-d584fb6c717a43d9",
             "mac": "version-897f957153bd4d18",
-            "android": null,
-            "ios": null
+            "android": "2.733.988",
+            "ios": "2.731.942"
         },
         "beta": {
-            "windows": null,
-            "mac": null
+            "windows": "version-d584fb6c717a43d9",
+            "mac": "version-897f957153bd4d18"
         },
         "hidden": {
-            "windows": null,
+            "windows": "0.733.0.7330989|8/5/2026 10:25:03 AM",
             "mac": null
         }
     }
