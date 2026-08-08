@@ -54,7 +54,7 @@ const LAST_VERSIONS_DEFAULTS = {
     hidden: { windows: null, mac: null }
 };
 
-const BOT_VERSION = '1.12.0'; 
+const BOT_VERSION = '1.13.0'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -1066,6 +1066,21 @@ client.on('messageCreate', async (message) => {
                     '`check [name]` — Query structural exploit bypass signatures.',
                     '`statusvc` — Automatically setup channels layout to track bot status.',
                     '`maintenance @bot [true/false]` — Toggle Maintenance mode for this bot **or crashy** (restricted).'
+                ]
+            },
+            {
+                title: '💰 EazyCoins Economy',
+                lines: [
+                    '`beg` — Beg for a small handout of EazyCoins.',
+                    '`balance [@user]` — Check your (or someone else\'s) wallet.',
+                    '`huntcoins` — Hunt animals in the wild for EazyCoins.',
+                    '`rob [@user]` — Attempt to rob a random member or a specific target.',
+                    '`breakinto` — Break into a house and steal whatever\'s inside.',
+                    '`gamble <amount/all>` — Flip a coin, double or lose your bet.',
+                    '`blackjack <amount/all>` — Play a full interactive round of blackjack.',
+                    '`cryptolaunch <name>` — Launch your own fake crypto company (500,000 EazyCoins).',
+                    '`cryptobuy <coin> <amount>` — Buy into a crypto company (needs 1,000,000+ net worth + a linked company).',
+                    '`cryptoportfolio` — View all your crypto holdings and total value.'
                 ]
             },
             {
