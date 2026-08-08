@@ -100,6 +100,106 @@ function saveConfig() {
     }
 }
 
+// ================= EazyCoins Economy System =================
+const ECONOMY_PATH = path.join(__dirname, 'economy_config.json');
+const DEFAULT_ECONOMY_COMPANIES = {
+    doge: { name: 'DOGE', ownerId: null, price: 0.18 },
+    pepe: { name: 'PEPE', ownerId: null, price: 0.006 },
+    moon: { name: 'MOON', ownerId: null, price: 95 }
+};
+
+let economyData = {
+    wallets: {},          // userId -> EazyCoins balance
+    lastBeg: {},           // userId -> timestamp
+    lastHunt: {},          // userId -> timestamp
+    lastRob: {},            // userId -> timestamp
+    lastBreakin: {},        // userId -> timestamp
+    linkedCompany: {},      // userId -> true once they've used !cryptolaunch
+    companies: JSON.parse(JSON.stringify(DEFAULT_ECONOMY_COMPANIES)), // key -> { name, ownerId, price }
+    holdings: {}             // userId -> { companyKey: amount }
+};
+
+if (fs.existsSync(ECONOMY_PATH)) {
+    try {
+        const fileData = fs.readFileSync(ECONOMY_PATH, 'utf8');
+        economyData = Object.assign(economyData, JSON.parse(fileData));
+        // Make sure the built-in coins always exist, even against an older economy file
+        economyData.companies = Object.assign(JSON.parse(JSON.stringify(DEFAULT_ECONOMY_COMPANIES)), economyData.companies);
+        for (const key of ['wallets', 'lastBeg', 'lastHunt', 'lastRob', 'lastBreakin', 'linkedCompany', 'holdings']) {
+            if (!economyData[key] || typeof economyData[key] !== 'object') economyData[key] = {};
+        }
+    } catch (e) {
+        console.error("⚠️ Failed to parse economy_config.json, starting fresh.", e);
+    }
+}
+
+function saveEconomy() {
+    try {
+        fs.writeFileSync(ECONOMY_PATH, JSON.stringify(economyData, null, 4), 'utf8');
+    } catch (e) {
+        console.error("⚠️ Could not write economy data to storage file.", e);
+    }
+}
+
+function getWallet(userId) {
+    return economyData.wallets[userId] || 0;
+}
+
+function addWallet(userId, amount) {
+    economyData.wallets[userId] = Math.max(0, Math.round((economyData.wallets[userId] || 0) + amount));
+}
+
+// Accepts a plain number, comma-formatted number, or "all"/"max" shorthand for bet amounts
+function parseBetAmount(raw, walletBalance) {
+    if (!raw) return null;
+    const normalized = raw.toString().toLowerCase();
+    if (normalized === 'all' || normalized === 'max') return walletBalance;
+    const num = parseInt(raw.toString().replace(/,/g, ''), 10);
+    if (isNaN(num)) return null;
+    return num;
+}
+
+function pickWeighted(list) {
+    const total = list.reduce((s, i) => s + i.weight, 0);
+    let roll = Math.random() * total;
+    for (const item of list) {
+        if (roll < item.weight) return item;
+        roll -= item.weight;
+    }
+    return list[list.length - 1];
+}
+
+// Minimal blackjack deck helpers (infinite-deck / draw-with-replacement — no card counting needed)
+const CARD_RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+const CARD_SUITS = ['♠️', '♥️', '♦️', '♣️'];
+
+function drawCard() {
+    const rank = CARD_RANKS[Math.floor(Math.random() * CARD_RANKS.length)];
+    const suit = CARD_SUITS[Math.floor(Math.random() * CARD_SUITS.length)];
+    return { rank, suit };
+}
+
+function cardValue(rank) {
+    if (rank === 'A') return 11;
+    if (rank === 'K' || rank === 'Q' || rank === 'J') return 10;
+    return parseInt(rank, 10);
+}
+
+function handValue(hand) {
+    let total = hand.reduce((sum, c) => sum + cardValue(c.rank), 0);
+    let aces = hand.filter(c => c.rank === 'A').length;
+    while (total > 21 && aces > 0) {
+        total -= 10;
+        aces--;
+    }
+    return total;
+}
+
+function formatHand(hand) {
+    return hand.map(c => `${c.rank}${c.suit}`).join(' ');
+}
+// ================= End EazyCoins Economy System Engine =================
+
 const EXECUTOR_IMAGES = {
     "volt": "https://cdn.discordapp.com/attachments/1478359860570751159/1526169379459563601/sunc.png",
     "potassium": "https://cdn.discordapp.com/attachments/1478359860570751159/1526176916531318814/sunc.png",
@@ -1617,6 +1717,411 @@ client.on('messageCreate', async (message) => {
             .setDescription(`**Date:** ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}\n\n**Bot:** ${botStatusText}\n**GitHub API:** ${ghStatus}\n**crashy:** ${crashyStatus}\n\n⏱️ **Uptime:** \`${hours}h ${minutes}m\``)
             .setTimestamp();
         return message.reply({ embeds: [statusEmbed] });
+    }
+
+    // ================= EazyCoins Economy Commands =================
+
+    // !beg
+    if (command === 'beg') {
+        const BEG_COOLDOWN = 15 * 1000;
+        const last = economyData.lastBeg[message.author.id] || 0;
+        const remaining = BEG_COOLDOWN - (Date.now() - last);
+        if (remaining > 0) return sendError(message, `You're begging too much! Try again in **${Math.ceil(remaining / 1000)}s**.`);
+
+        economyData.lastBeg[message.author.id] = Date.now();
+
+        if (Math.random() < 0.10) {
+            saveEconomy();
+            return message.reply({ embeds: [new EmbedBuilder().setColor(0x95A5A6).setDescription("🪙 Nobody gave you anything this time. Try again later!").setFooter({ text: 'Eazy Economy • Begging' })] });
+        }
+
+        const BEG_LINES = [
+            "A stranger tossed you some spare change.",
+            "You found coins on the ground!",
+            "Someone felt bad and gave you a handout.",
+            "You did a little dance and earned some pity money."
+        ];
+        const reward = Math.floor(Math.random() * 46) + 5; // 5-50
+        addWallet(message.author.id, reward);
+        saveEconomy();
+
+        const line = BEG_LINES[Math.floor(Math.random() * BEG_LINES.length)];
+        const embed = new EmbedBuilder()
+            .setColor(0xF1C40F)
+            .setDescription(`🪙 ${line} You got **${reward.toLocaleString()} eazycoins**!`)
+            .setFooter({ text: 'Eazy Economy • Begging' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !balance / !bal
+    if (command === 'balance' || command === 'bal') {
+        const target = message.mentions.users.first() || message.author;
+        const wallet = getWallet(target.id);
+        const embed = new EmbedBuilder()
+            .setColor(0xF1C40F)
+            .setTitle(`💰 ${target.username}'s Balance`)
+            .addFields({ name: 'Wallet', value: `${wallet.toLocaleString()} eazycoins` })
+            .setThumbnail(target.displayAvatarURL())
+            .setFooter({ text: 'Eazy Economy • Wallet' });
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !huntcoins / !hunt
+    if (command === 'huntcoins' || command === 'hunt') {
+        const HUNT_COOLDOWN = 20 * 1000;
+        const last = economyData.lastHunt[message.author.id] || 0;
+        const remaining = HUNT_COOLDOWN - (Date.now() - last);
+        if (remaining > 0) return sendError(message, `You're still out hunting! Try again in **${Math.ceil(remaining / 1000)}s**.`);
+
+        economyData.lastHunt[message.author.id] = Date.now();
+
+        if (Math.random() < 0.15) {
+            saveEconomy();
+            return message.reply({ embeds: [new EmbedBuilder().setColor(0x95A5A6).setDescription("🌲 You searched the woods but found nothing this time.").setFooter({ text: 'Eazy Economy • Hunting' })] });
+        }
+
+        const HUNT_ANIMALS = [
+            { name: 'Rabbit', emoji: '🐇', min: 10, max: 60, weight: 40 },
+            { name: 'Deer', emoji: '🦌', min: 40, max: 120, weight: 25 },
+            { name: 'Wolf', emoji: '🐺', min: 80, max: 220, weight: 15 },
+            { name: 'Bear', emoji: '🐻', min: 150, max: 400, weight: 10 },
+            { name: 'Golden Stag', emoji: '✨', min: 500, max: 1500, weight: 3 }
+        ];
+        const animal = pickWeighted(HUNT_ANIMALS);
+        const reward = Math.floor(Math.random() * (animal.max - animal.min + 1)) + animal.min;
+        addWallet(message.author.id, reward);
+        saveEconomy();
+
+        const embed = new EmbedBuilder()
+            .setColor(0x2ECC71)
+            .setDescription(`${animal.emoji} You hunted down a **${animal.name}** and earned **${reward.toLocaleString()} eazycoins**!`)
+            .setFooter({ text: 'Eazy Economy • Hunting' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !rob / !rob @user
+    if (command === 'rob') {
+        const ROB_COOLDOWN = 5 * 60 * 1000;
+        const ROB_MIN_VICTIM_BALANCE = 500;
+
+        const last = economyData.lastRob[message.author.id] || 0;
+        const remaining = ROB_COOLDOWN - (Date.now() - last);
+        if (remaining > 0) return sendError(message, `You're laying low after your last job. Try again in **${Math.ceil(remaining / 60000)}m**.`);
+
+        const robberWallet = getWallet(message.author.id);
+        let targetUser = message.mentions.users.first();
+
+        if (targetUser) {
+            if (targetUser.id === message.author.id) return sendError(message, "You can't rob yourself.");
+            if (targetUser.bot) return sendError(message, "You can't rob a bot.");
+        } else {
+            const candidates = Object.keys(economyData.wallets).filter(id => id !== message.author.id && economyData.wallets[id] >= ROB_MIN_VICTIM_BALANCE);
+            if (candidates.length === 0) return sendError(message, "There's nobody worth robbing right now.");
+            const randomId = candidates[Math.floor(Math.random() * candidates.length)];
+            targetUser = await client.users.fetch(randomId).catch(() => null);
+            if (!targetUser) return sendError(message, "Couldn't find a target to rob right now.");
+        }
+
+        const targetWallet = getWallet(targetUser.id);
+        if (targetWallet < ROB_MIN_VICTIM_BALANCE) return sendError(message, `**${targetUser.username}** doesn't have enough EazyCoins to be worth robbing (needs at least ${ROB_MIN_VICTIM_BALANCE.toLocaleString()}).`);
+
+        economyData.lastRob[message.author.id] = Date.now();
+
+        let embed;
+        if (Math.random() < 0.45) {
+            const stealPercent = Math.random() * 0.15 + 0.10; // 10-25%
+            const stolen = Math.min(Math.floor(targetWallet * stealPercent), 500000);
+            addWallet(targetUser.id, -stolen);
+            addWallet(message.author.id, stolen);
+            embed = new EmbedBuilder()
+                .setColor(0x2ECC71)
+                .setDescription(`🕵️ You robbed **${targetUser.username}** and got away with **${stolen.toLocaleString()} eazycoins**!`)
+                .setFooter({ text: 'Eazy Economy • Robbery' });
+        } else {
+            const finePercent = Math.random() * 0.10 + 0.05; // 5-15%
+            const fine = Math.min(Math.floor(robberWallet * finePercent), 250000);
+            if (fine > 0) addWallet(message.author.id, -fine);
+            embed = new EmbedBuilder()
+                .setColor(0xE74C3C)
+                .setDescription(`🚨 You got caught trying to rob **${targetUser.username}** and paid a **${fine.toLocaleString()} eazycoins** fine!`)
+                .setFooter({ text: 'Eazy Economy • Robbery' });
+        }
+        saveEconomy();
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !breakinto
+    if (command === 'breakinto') {
+        const BREAKIN_COOLDOWN = 3 * 60 * 1000;
+        const last = economyData.lastBreakin[message.author.id] || 0;
+        const remaining = BREAKIN_COOLDOWN - (Date.now() - last);
+        if (remaining > 0) return sendError(message, `The neighborhood's still on alert. Try again in **${Math.ceil(remaining / 60000)}m**.`);
+
+        economyData.lastBreakin[message.author.id] = Date.now();
+
+        let embed;
+        if (Math.random() < 0.40) {
+            const wallet = getWallet(message.author.id);
+            const fine = Math.min(Math.floor(wallet * (Math.random() * 0.08 + 0.02)), 100000);
+            if (fine > 0) addWallet(message.author.id, -fine);
+            embed = new EmbedBuilder()
+                .setColor(0xE74C3C)
+                .setDescription(fine > 0
+                    ? `🚔 You got caught breaking in and paid a **${fine.toLocaleString()} eazycoins** fine!`
+                    : `🚔 You got caught breaking in, but had nothing worth fining.`)
+                .setFooter({ text: 'Eazy Economy • Break-In' });
+        } else {
+            const jackpot = Math.random() < 0.08;
+            const reward = jackpot
+                ? Math.floor(Math.random() * 15000) + 5000
+                : Math.floor(Math.random() * 1800) + 200;
+            addWallet(message.author.id, reward);
+            embed = new EmbedBuilder()
+                .setColor(0x2ECC71)
+                .setDescription(`${jackpot ? '💎 **JACKPOT HOUSE!** You' : '🏚️ You broke into a house and'} found **${reward.toLocaleString()} eazycoins**!`)
+                .setFooter({ text: 'Eazy Economy • Break-In' });
+        }
+        saveEconomy();
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !gamble <amount>
+    if (command === 'gamble') {
+        const wallet = getWallet(message.author.id);
+        const bet = parseBetAmount(args[0], wallet);
+        if (bet === null) return sendError(message, "Usage: `!gamble <amount>` (or `!gamble all`)");
+        if (bet <= 0) return sendError(message, "Bet must be greater than 0.");
+        if (bet > wallet) return sendError(message, "You don't have that many EazyCoins.");
+
+        const won = Math.random() < 0.47; // slight house edge
+        addWallet(message.author.id, won ? bet : -bet);
+        const newBalance = getWallet(message.author.id);
+        saveEconomy();
+
+        const embed = new EmbedBuilder()
+            .setColor(won ? 0x2ECC71 : 0xE74C3C)
+            .setTitle(won ? '🎰 GAMBLE - YOU WON!' : '🎰 GAMBLE - YOU LOST!')
+            .setDescription(`🎲 ${won ? '+' : '-'}${bet.toLocaleString()} eazycoins\n\n**New Balance:** ${newBalance.toLocaleString()} eazycoins`)
+            .setFooter({ text: 'Eazy Economy • Gambling' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !blackjack <amount>
+    if (command === 'blackjack') {
+        const wallet = getWallet(message.author.id);
+        let bet = parseBetAmount(args[0], wallet);
+        if (bet === null) return sendError(message, "Usage: `!blackjack <amount>` (or `!blackjack all`)");
+        if (bet <= 0) return sendError(message, "Bet must be greater than 0.");
+        if (bet > wallet) return sendError(message, "You don't have that many EazyCoins.");
+
+        addWallet(message.author.id, -bet);
+        saveEconomy();
+
+        let playerHand = [drawCard(), drawCard()];
+        let dealerHand = [drawCard(), drawCard()];
+        let finished = false;
+
+        const buildEmbed = (state, resultText) => {
+            const embed = new EmbedBuilder()
+                .setColor(state === 'lost' ? 0xE74C3C : state === 'won' ? 0x2ECC71 : 0x3498DB)
+                .setTitle('🃏 Blackjack')
+                .setFooter({ text: 'Eazy Casino • Blackjack' });
+            if (resultText) embed.setDescription(resultText);
+            embed.addFields(
+                { name: `🤵 Dealer (${state === 'playing' ? '?' : handValue(dealerHand)})`, value: state === 'playing' ? `${formatHand([dealerHand[0]])} 🂠` : formatHand(dealerHand) },
+                { name: `🧍 You (${handValue(playerHand)})`, value: formatHand(playerHand) },
+                { name: '💰 Bet', value: `${bet.toLocaleString()} eazycoins` }
+            );
+            return embed;
+        };
+
+        // Natural blackjack — instant 3:2 payout
+        if (handValue(playerHand) === 21) {
+            const winnings = Math.floor(bet * 2.5);
+            addWallet(message.author.id, winnings);
+            saveEconomy();
+            return message.reply({ embeds: [buildEmbed('won', `🎉 **BLACKJACK!** Won ${winnings.toLocaleString()} eazycoins!`)] });
+        }
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('bj_hit').setLabel('Hit').setStyle(ButtonStyle.Primary).setEmoji('🃏'),
+            new ButtonBuilder().setCustomId('bj_stand').setLabel('Stand').setStyle(ButtonStyle.Secondary).setEmoji('✋'),
+            new ButtonBuilder().setCustomId('bj_double').setLabel('Double Down').setStyle(ButtonStyle.Success).setEmoji('⬆️')
+        );
+
+        const gameMessage = await message.reply({ embeds: [buildEmbed('playing')], components: [row] });
+        let doubled = false;
+
+        const collector = gameMessage.createMessageComponentCollector({ time: 45000, filter: (i) => i.user.id === message.author.id });
+
+        collector.on('collect', async (interaction) => {
+            if (interaction.customId === 'bj_hit') {
+                playerHand.push(drawCard());
+                if (handValue(playerHand) > 21) {
+                    finished = true;
+                    collector.stop('bust');
+                    return interaction.update({ embeds: [buildEmbed('lost', `💥 **BUST!** You lost ${bet.toLocaleString()} eazycoins.`)], components: [] });
+                }
+                return interaction.update({ embeds: [buildEmbed('playing')], components: [row] });
+            }
+
+            if (interaction.customId === 'bj_double') {
+                if (doubled || playerHand.length > 2) return interaction.reply({ content: "You can only double down on your first move.", ephemeral: true });
+                if (bet > getWallet(message.author.id)) return interaction.reply({ content: "You don't have enough EazyCoins to double down.", ephemeral: true });
+                doubled = true;
+                addWallet(message.author.id, -bet);
+                bet *= 2;
+                saveEconomy();
+                playerHand.push(drawCard());
+                if (handValue(playerHand) > 21) {
+                    finished = true;
+                    collector.stop('bust');
+                    return interaction.update({ embeds: [buildEmbed('lost', `💥 **BUST!** You lost ${bet.toLocaleString()} eazycoins.`)], components: [] });
+                }
+                collector.stop('stand');
+                return interaction.update({ embeds: [buildEmbed('playing')], components: [] });
+            }
+
+            if (interaction.customId === 'bj_stand') {
+                collector.stop('stand');
+                return interaction.update({ embeds: [buildEmbed('playing')], components: [] });
+            }
+        });
+
+        collector.on('end', async (_collected, reason) => {
+            if (finished) return; // bust already resolved and paid out in the collect handler
+
+            while (handValue(dealerHand) < 17) {
+                dealerHand.push(drawCard());
+            }
+            const playerTotal = handValue(playerHand);
+            const dealerTotal = handValue(dealerHand);
+
+            let resultText, state;
+            if (dealerTotal > 21 || playerTotal > dealerTotal) {
+                const winnings = bet * 2;
+                addWallet(message.author.id, winnings);
+                resultText = `🎉 **YOU WIN!** Won ${winnings.toLocaleString()} eazycoins!`;
+                state = 'won';
+            } else if (playerTotal === dealerTotal) {
+                addWallet(message.author.id, bet);
+                resultText = `🤝 **PUSH.** Your ${bet.toLocaleString()} eazycoins bet was returned.`;
+                state = 'playing';
+            } else {
+                resultText = `❌ **YOU LOSE!** Lost ${bet.toLocaleString()} eazycoins.`;
+                state = 'lost';
+            }
+            saveEconomy();
+            await gameMessage.edit({ embeds: [buildEmbed(state, resultText)], components: [] }).catch(() => {});
+        });
+    }
+
+    // !cryptolaunch <company name>
+    if (command === 'cryptolaunch') {
+        const companyName = args.join(' ').trim();
+        if (!companyName) return sendError(message, "Usage: `!cryptolaunch <company name>`");
+        if (companyName.length > 24) return sendError(message, "Company name must be 24 characters or fewer.");
+
+        const key = companyName.toLowerCase().replace(/\s+/g, '');
+        if (economyData.companies[key]) return sendError(message, `A company called **${economyData.companies[key].name}** already exists. Pick another name.`);
+
+        const LAUNCH_COST = 500000;
+        const wallet = getWallet(message.author.id);
+        if (wallet < LAUNCH_COST) return sendError(message, `You need at least **${LAUNCH_COST.toLocaleString()} EazyCoins** to launch a crypto company. You have **${wallet.toLocaleString()}**.`);
+
+        addWallet(message.author.id, -LAUNCH_COST);
+        const startingPrice = parseFloat((Math.random() * 49 + 1).toFixed(2)); // 1.00 - 50.00
+
+        economyData.companies[key] = { name: companyName, ownerId: message.author.id, price: startingPrice, createdAt: Date.now() };
+        economyData.linkedCompany[message.author.id] = true;
+        saveEconomy();
+
+        const embed = new EmbedBuilder()
+            .setColor(0xF1C40F)
+            .setTitle('🚀 Crypto Company Launched!')
+            .setDescription(`**${companyName}** is now live and tradable with \`!cryptobuy ${key}\`!`)
+            .addFields(
+                { name: 'Founder', value: `${message.author}`, inline: true },
+                { name: 'Starting Price', value: `${startingPrice.toLocaleString()} eazycoins each`, inline: true },
+                { name: 'Cost To Launch', value: `${LAUNCH_COST.toLocaleString()} eazycoins`, inline: true }
+            )
+            .setFooter({ text: 'Eazy Crypto • Launch' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !cryptobuy <coin> <amount>
+    if (command === 'cryptobuy') {
+        const coinKey = args[0]?.toLowerCase();
+        const amount = parseFloat(args[1]);
+        if (!coinKey || !amount || amount <= 0) return sendError(message, "Usage: `!cryptobuy <coin> <amount>` — e.g. `!cryptobuy moon 100`");
+
+        const company = economyData.companies[coinKey];
+        if (!company) return sendError(message, `No crypto company found called \`${coinKey}\`. Check the name or launch your own with \`!cryptolaunch\`.`);
+
+        const MIN_NET_WORTH = 1000000;
+        const wallet = getWallet(message.author.id);
+        if (wallet < MIN_NET_WORTH) return sendError(message, `You need at least **${MIN_NET_WORTH.toLocaleString()} EazyCoins** in your wallet to access crypto trading.`);
+        if (!economyData.linkedCompany[message.author.id]) return sendError(message, "You need a Crypto Company linked to your account first. Use `!cryptolaunch <name>` to set one up.");
+
+        const grossCost = amount * company.price;
+        const fee = Math.ceil(grossCost * 0.05);
+        const totalCost = Math.ceil(grossCost) + fee;
+
+        if (totalCost > wallet) return sendError(message, `That purchase costs **${totalCost.toLocaleString()} EazyCoins** (incl. 5% fee) — you only have **${wallet.toLocaleString()}**.`);
+
+        addWallet(message.author.id, -totalCost);
+        if (!economyData.holdings[message.author.id]) economyData.holdings[message.author.id] = {};
+        economyData.holdings[message.author.id][coinKey] = (economyData.holdings[message.author.id][coinKey] || 0) + amount;
+
+        // Simulate a small price drift after each buy (fake market movement — not real trading)
+        company.price = Math.max(0.001, parseFloat((company.price * (1 + (Math.random() * 0.04 - 0.01))).toFixed(4)));
+        saveEconomy();
+
+        const totalHoldings = economyData.holdings[message.author.id][coinKey];
+
+        const embed = new EmbedBuilder()
+            .setColor(0xF1C40F)
+            .setTitle('📈 Crypto Purchased!')
+            .setDescription(`Bought **${amount.toLocaleString()} ${company.name}** for **${totalCost.toLocaleString()} eazycoins**`)
+            .addFields(
+                { name: 'Price', value: `${company.price.toLocaleString()} eazycoins each`, inline: true },
+                { name: 'Trading Fee (5%)', value: `${fee.toLocaleString()} eazycoins`, inline: true },
+                { name: 'Total Holdings', value: `${totalHoldings.toLocaleString()} ${company.name}`, inline: false }
+            )
+            .setFooter({ text: 'Eazy Crypto' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !cryptoportfolio (alias: !cryptoportfoilo, matching the requested spelling)
+    if (command === 'cryptoportfolio' || command === 'cryptoportfoilo') {
+        const holdings = economyData.holdings[message.author.id];
+        if (!holdings || Object.keys(holdings).length === 0) return sendError(message, "You don't own any crypto yet. Use `!cryptobuy` to get started.");
+
+        let totalValue = 0;
+        const fields = [];
+        for (const [key, amount] of Object.entries(holdings)) {
+            if (amount <= 0) continue;
+            const company = economyData.companies[key];
+            if (!company) continue;
+            const value = amount * company.price;
+            totalValue += value;
+            fields.push({ name: company.name, value: `${amount.toLocaleString()} coins\n${Math.round(value).toLocaleString()} eazycoins`, inline: true });
+        }
+
+        if (fields.length === 0) return sendError(message, "You don't own any crypto yet. Use `!cryptobuy` to get started.");
+
+        const embed = new EmbedBuilder()
+            .setColor(0xF1C40F)
+            .setTitle(`📊 ${message.author.username}'s Crypto Portfolio`)
+            .addFields(...fields, { name: '💰 Total Portfolio Value', value: `${Math.round(totalValue).toLocaleString()} eazycoins`, inline: false })
+            .setFooter({ text: 'Eazy Crypto • Portfolio' });
+
+        return message.reply({ embeds: [embed] });
     }
 });
 
