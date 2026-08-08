@@ -54,8 +54,127 @@ const LAST_VERSIONS_DEFAULTS = {
     hidden: { windows: null, mac: null }
 };
 
-const BOT_VERSION = '1.12.0'; 
+const BOT_VERSION = '1.13.0'; 
 
+function runConfigMigrations() {
+    // Backwards-compatible migrations
+    if (typeof versionConfig.maintenanceMode === 'boolean') {
+        versionConfig.maintenanceMode = { eazy: versionConfig.maintenanceMode, crashy: false };
+    } else if (!versionConfig.maintenanceMode || typeof versionConfig.maintenanceMode !== 'object') {
+        versionConfig.maintenanceMode = { eazy: false, crashy: false };
+    }
+
+    if (!versionConfig.lastVersions || typeof versionConfig.lastVersions !== 'object') {
+        versionConfig.lastVersions = JSON.parse(JSON.stringify(LAST_VERSIONS_DEFAULTS));
+    } else {
+        for (const key of ['live', 'beta', 'hidden']) {
+            const existing = versionConfig.lastVersions[key];
+            if (!existing || typeof existing !== 'object') {
+                // Old flat string/null value from a previous bot version — carry it over as the Windows entry
+                versionConfig.lastVersions[key] = { ...LAST_VERSIONS_DEFAULTS[key], windows: (typeof existing === 'string' ? existing : null) };
+            } else {
+                versionConfig.lastVersions[key] = { ...LAST_VERSIONS_DEFAULTS[key], ...existing };
+            }
+        }
+    }
+    if (!versionConfig.robloxChannels || typeof versionConfig.robloxChannels !== 'object') {
+        versionConfig.robloxChannels = { live: null, beta: null, hidden: null };
+    }
+    if (!versionConfig.statusVCs || typeof versionConfig.statusVCs !== 'object') {
+        versionConfig.statusVCs = { crashy: null, eazy: null };
+    }
+}
+
+// ---- GitHub-backed persistence -------------------------------------------------
+// Render's free web services wipe the local disk on every redeploy, so a plain
+// local JSON file resets every time index.js gets reuploaded/pushed. To survive
+// that, we mirror version_config.json into the GitHub repo itself via the
+// Contents API, and read it back from GitHub on boot (local file is kept as a
+// same-session fallback cache only).
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || null;
+const GITHUB_REPO = process.env.GITHUB_REPO || null; // e.g. "cryptozzz123/eazy-moderation"
+const GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
+const GITHUB_CONFIG_API = GITHUB_REPO ? `https://api.github.com/repos/${GITHUB_REPO}/contents/version_config.json` : null;
+let githubConfigSha = null;
+
+function githubPersistenceEnabled() {
+    return !!(GITHUB_TOKEN && GITHUB_REPO);
+}
+
+function githubHeaders(extra = {}) {
+    return {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'eazy-moderation-bot',
+        ...extra
+    };
+}
+
+async function loadConfigFromGitHub() {
+    if (!githubPersistenceEnabled()) return false;
+    try {
+        const res = await fetch(`${GITHUB_CONFIG_API}?ref=${GITHUB_BRANCH}`, { headers: githubHeaders() });
+        if (!res.ok) {
+            if (res.status === 404) {
+                console.log("ℹ️ No version_config.json found in the GitHub repo yet — it will be created on first save.");
+            } else {
+                console.error(`⚠️ GitHub config fetch failed (${res.status}), falling back to local cache.`);
+            }
+            return false;
+        }
+        const data = await res.json();
+        githubConfigSha = data.sha;
+        const decoded = Buffer.from(data.content, 'base64').toString('utf8');
+        versionConfig = Object.assign(versionConfig, JSON.parse(decoded));
+        console.log("✅ Loaded persisted configuration from the GitHub repo.");
+        return true;
+    } catch (e) {
+        console.error("⚠️ Failed to load config from GitHub, falling back to local cache.", e.message);
+        return false;
+    }
+}
+
+async function pushConfigToGitHub(retrying = false) {
+    if (!githubPersistenceEnabled()) return;
+    try {
+        const body = {
+            message: 'chore: sync bot config [skip ci]',
+            content: Buffer.from(JSON.stringify(versionConfig, null, 4), 'utf8').toString('base64'),
+            branch: GITHUB_BRANCH
+        };
+        if (githubConfigSha) body.sha = githubConfigSha;
+
+        const res = await fetch(GITHUB_CONFIG_API, {
+            method: 'PUT',
+            headers: githubHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify(body)
+        });
+
+        if ((res.status === 409 || res.status === 422) && !retrying) {
+            // Our cached sha is stale (e.g. file was edited elsewhere) — refetch and retry once.
+            const fresh = await fetch(`${GITHUB_CONFIG_API}?ref=${GITHUB_BRANCH}`, { headers: githubHeaders() });
+            if (fresh.ok) {
+                const freshData = await fresh.json();
+                githubConfigSha = freshData.sha;
+                return pushConfigToGitHub(true);
+            }
+            return;
+        }
+
+        if (!res.ok) {
+            console.error(`⚠️ Failed to push config to GitHub (${res.status}).`);
+            return;
+        }
+
+        const json = await res.json();
+        githubConfigSha = json.content?.sha || githubConfigSha;
+    } catch (e) {
+        console.error("⚠️ GitHub config push error:", e.message);
+    }
+}
+
+// Local file is loaded first purely as a same-boot fallback in case GitHub is
+// briefly unreachable — the GitHub copy (loaded async below, before login) wins.
 if (fs.existsSync(CONFIG_PATH)) {
     try {
         const fileData = fs.readFileSync(CONFIG_PATH, 'utf8');
@@ -64,33 +183,7 @@ if (fs.existsSync(CONFIG_PATH)) {
         console.error("⚠️ Failed to parse version_config.json, starting fresh.", e);
     }
 }
-
-// Backwards-compatible migrations
-if (typeof versionConfig.maintenanceMode === 'boolean') {
-    versionConfig.maintenanceMode = { eazy: versionConfig.maintenanceMode, crashy: false };
-} else if (!versionConfig.maintenanceMode || typeof versionConfig.maintenanceMode !== 'object') {
-    versionConfig.maintenanceMode = { eazy: false, crashy: false };
-}
-
-if (!versionConfig.lastVersions || typeof versionConfig.lastVersions !== 'object') {
-    versionConfig.lastVersions = JSON.parse(JSON.stringify(LAST_VERSIONS_DEFAULTS));
-} else {
-    for (const key of ['live', 'beta', 'hidden']) {
-        const existing = versionConfig.lastVersions[key];
-        if (!existing || typeof existing !== 'object') {
-            // Old flat string/null value from a previous bot version — carry it over as the Windows entry
-            versionConfig.lastVersions[key] = { ...LAST_VERSIONS_DEFAULTS[key], windows: (typeof existing === 'string' ? existing : null) };
-        } else {
-            versionConfig.lastVersions[key] = { ...LAST_VERSIONS_DEFAULTS[key], ...existing };
-        }
-    }
-}
-if (!versionConfig.robloxChannels || typeof versionConfig.robloxChannels !== 'object') {
-    versionConfig.robloxChannels = { live: null, beta: null, hidden: null };
-}
-if (!versionConfig.statusVCs || typeof versionConfig.statusVCs !== 'object') {
-    versionConfig.statusVCs = { crashy: null, eazy: null };
-}
+runConfigMigrations();
 
 function saveConfig() {
     try {
@@ -98,6 +191,7 @@ function saveConfig() {
     } catch (e) {
         console.error("⚠️ Could not write configurations to storage file.", e);
     }
+    pushConfigToGitHub(); // fire-and-forget — keeps GitHub in sync so redeploys don't lose settings
 }
 
 const EXECUTOR_IMAGES = {
@@ -964,6 +1058,7 @@ client.on('messageCreate', async (message) => {
                 title: '🛡️ Exploit Automation Tracking & VCs',
                 lines: [
                     '`check [name]` — Query structural exploit bypass signatures.',
+                    '`scripts` — List Roblox script sites with live API status.',
                     '`statusvc` — Automatically setup channels layout to track bot status.',
                     '`maintenance @bot [true/false]` — Toggle Maintenance mode for this bot **or crashy** (restricted).'
                 ]
@@ -1482,6 +1577,58 @@ client.on('messageCreate', async (message) => {
         }
     }
 
+    if (command === 'scripts') {
+        const processing = await message.reply("Pinging script site APIs...");
+
+        const sites = [
+            { name: 'ScriptBlox', url: 'https://scriptblox.com/', check: 'https://scriptblox.com/api/script/fetch?page=1', type: 'json' },
+            { name: 'Rscripts', url: 'https://rscripts.net/', check: 'https://api.rscripts.net/health', type: 'health' },
+            { name: 'RobloxScripts', url: 'https://robloxscripts.com/', check: 'https://robloxscripts.com/api/v1', type: 'apiroot' },
+            { name: 'HaxHell', url: 'https://haxhell.com/', check: 'https://haxhell.com/', type: 'ping' }
+        ];
+
+        const results = await Promise.all(sites.map(async (site) => {
+            try {
+                const res = await fetch(site.check, {
+                    method: site.type === 'ping' ? 'HEAD' : 'GET',
+                    signal: AbortSignal.timeout(4000)
+                });
+                if (!res.ok) return { ...site, status: '🔴 Down' };
+
+                if (site.type === 'health') {
+                    const data = await res.json();
+                    return { ...site, status: data?.status === 'ok' ? '🟢 Working' : '🟠 Degraded' };
+                }
+                if (site.type === 'apiroot') {
+                    const data = await res.json();
+                    return { ...site, status: data?.status === 'ok' ? '🟢 Working' : '🟠 Degraded' };
+                }
+                if (site.type === 'json') {
+                    const data = await res.json();
+                    return { ...site, status: data ? '🟢 Working' : '🟠 Degraded' };
+                }
+                // 'ping' — no public API, so reachability is the best we can honestly report
+                return { ...site, status: '🟢 Working' };
+            } catch {
+                return { ...site, status: '🔴 Down' };
+            }
+        }));
+
+        const description = results.map(r => `**${r.name}** — ${r.status}\n${r.url}`).join('\n\n');
+
+        const scriptsEmbed = new EmbedBuilder()
+            .setColor(0x9B59B6)
+            .setTitle('📜 Roblox Script Websites')
+            .setDescription(description)
+            .setFooter({ text: "Status pulled live from each site's public API where available." })
+            .setTimestamp();
+
+        const linkButtons = results.map(r => new ButtonBuilder().setLabel(r.name).setStyle(ButtonStyle.Link).setURL(r.url));
+        const buttonRow = new ActionRowBuilder().addComponents(linkButtons);
+
+        return processing.edit({ content: null, embeds: [scriptsEmbed], components: [buttonRow] });
+    }
+
     if (command === 'botlogs') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) return sendError(message, "Missing rights.");
         const text = globalBotLogs.map(l => `\`[${l.timestamp}]\` **${l.user}**: \`${l.command}\``).join('\n') || "Empty logs cache.";
@@ -1626,4 +1773,12 @@ http.createServer((req, res) => { res.writeHead(200); res.end('System Alive'); }
 process.on('unhandledRejection', (reason) => console.error('⚠️ Intercepted Unhandled Rejection:', reason));
 process.on('uncaughtException', (err) => console.error('⚠️ Intercepted Uncaught Exception:', err));
 
-client.login(process.env.DISCORD_TOKEN);
+(async () => {
+    if (githubPersistenceEnabled()) {
+        const loaded = await loadConfigFromGitHub();
+        if (loaded) runConfigMigrations();
+    } else {
+        console.log("ℹ️ GITHUB_TOKEN / GITHUB_REPO env vars not set — config will NOT survive Render redeploys. See setup notes.");
+    }
+    client.login(process.env.DISCORD_TOKEN);
+})();
