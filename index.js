@@ -46,7 +46,8 @@ let versionConfig = {
         live: { windows: null, mac: null, android: null, ios: null },
         beta: { windows: null, mac: null },
         hidden: { windows: null, mac: null }
-    }
+    },
+    economy: {} // Persisted user economy data
 };
 
 // Default per-platform shape for each update type — used to migrate old flat configs
@@ -56,7 +57,7 @@ const LAST_VERSIONS_DEFAULTS = {
     hidden: { windows: null, mac: null }
 };
 
-const BOT_VERSION = '1.15.0'; 
+const BOT_VERSION = '1.16.0'; 
 
 function runConfigMigrations() {
     // Backwards-compatible migrations
@@ -72,7 +73,6 @@ function runConfigMigrations() {
         for (const key of ['live', 'beta', 'hidden']) {
             const existing = versionConfig.lastVersions[key];
             if (!existing || typeof existing !== 'object') {
-                // Old flat string/null value from a previous bot version — carry it over as the Windows entry
                 versionConfig.lastVersions[key] = { ...LAST_VERSIONS_DEFAULTS[key], windows: (typeof existing === 'string' ? existing : null) };
             } else {
                 versionConfig.lastVersions[key] = { ...LAST_VERSIONS_DEFAULTS[key], ...existing };
@@ -93,16 +93,14 @@ function runConfigMigrations() {
     if (typeof versionConfig.banwaveOverrideExpiry !== 'number') {
         versionConfig.banwaveOverrideExpiry = null;
     }
+    if (!versionConfig.economy || typeof versionConfig.economy !== 'object') {
+        versionConfig.economy = {};
+    }
 }
 
 // ---- GitHub-backed persistence -------------------------------------------------
-// Render's free web services wipe the local disk on every redeploy, so a plain
-// local JSON file resets every time index.js gets reuploaded/pushed. To survive
-// that, we mirror version_config.json into the GitHub repo itself via the
-// Contents API, and read it back from GitHub on boot (local file is kept as a
-// same-session fallback cache only).
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || null;
-const GITHUB_REPO = process.env.GITHUB_REPO || null; // e.g. "cryptozzz123/eazy-moderation"
+const GITHUB_REPO = process.env.GITHUB_REPO || null; 
 const GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
 const GITHUB_CONFIG_API = GITHUB_REPO ? `https://api.github.com/repos/${GITHUB_REPO}/contents/version_config.json` : null;
 let githubConfigSha = null;
@@ -161,7 +159,6 @@ async function pushConfigToGitHub(retrying = false) {
         });
 
         if ((res.status === 409 || res.status === 422) && !retrying) {
-            // Our cached sha is stale (e.g. file was edited elsewhere) — refetch and retry once.
             const fresh = await fetch(`${GITHUB_CONFIG_API}?ref=${GITHUB_BRANCH}`, { headers: githubHeaders() });
             if (fresh.ok) {
                 const freshData = await fresh.json();
@@ -183,8 +180,6 @@ async function pushConfigToGitHub(retrying = false) {
     }
 }
 
-// Local file is loaded first purely as a same-boot fallback in case GitHub is
-// briefly unreachable — the GitHub copy (loaded async below, before login) wins.
 if (fs.existsSync(CONFIG_PATH)) {
     try {
         const fileData = fs.readFileSync(CONFIG_PATH, 'utf8');
@@ -201,7 +196,20 @@ function saveConfig() {
     } catch (e) {
         console.error("⚠️ Could not write configurations to storage file.", e);
     }
-    pushConfigToGitHub(); // fire-and-forget — keeps GitHub in sync so redeploys don't lose settings
+    pushConfigToGitHub(); 
+}
+
+// Economy Data Helper Functions
+function getEcoUser(userId) {
+    if (!versionConfig.economy[userId]) {
+        versionConfig.economy[userId] = {
+            coins: 0,
+            lastDaily: 0,
+            company: null, // { name: "", coinName: "", holdings: 0, tokenPrice: 100 }
+            portfolio: {}  // { [companyName]: amountHeld }
+        };
+    }
+    return versionConfig.economy[userId];
 }
 
 const EXECUTOR_IMAGES = {
@@ -263,8 +271,6 @@ async function updateStatusVoiceChannels() {
         }
     }
 
-    // Banwave status: manual override wins if active (and not expired), otherwise
-    // fall back to the auto-detected value from the community RSS feed.
     const overrideActive = versionConfig.banwaveOverride &&
         (!versionConfig.banwaveOverrideExpiry || Date.now() < versionConfig.banwaveOverrideExpiry);
 
@@ -273,7 +279,6 @@ async function updateStatusVoiceChannels() {
         effectiveBanwaveStatus = versionConfig.banwaveOverride;
     } else {
         if (versionConfig.banwaveOverride && !overrideActive) {
-            // Override just expired — clear it so we don't keep checking the clock every cycle
             versionConfig.banwaveOverride = null;
             versionConfig.banwaveOverrideExpiry = null;
             saveConfig();
@@ -306,9 +311,6 @@ async function updateStatusVoiceChannels() {
     }
 }
 
-// Registers a freshly polled version string for a given (type, platform) pair and
-// fires an alert only when it actually changed — and never on the very first observation,
-// so newly-tracked platforms (e.g. Android/iOS) don't spam the channel on rollout/startup.
 async function registerVersionAndAlert(type, platform, versionString, dateStr) {
     if (!versionString) return;
     const current = versionConfig.lastVersions[type][platform];
@@ -323,8 +325,6 @@ async function registerVersionAndAlert(type, platform, versionString, dateStr) {
     }
 }
 
-// Same idea as registerVersionAndAlert, but for "hidden" entries where the unique signature
-// is versionLabel+date combined (mirrors the original hidden-version change detection).
 async function registerHiddenAndAlert(platform, versionLabel, dateStr) {
     if (!versionLabel) return;
     const signature = `${versionLabel}|${dateStr}`;
@@ -341,7 +341,6 @@ async function registerHiddenAndAlert(platform, versionLabel, dateStr) {
 }
 
 async function checkRobloxVersions() {
-    // LIVE — Windows, macOS, Android, iOS (all from the same /versions/current payload)
     if (versionConfig.robloxChannels?.live) {
         try {
             const res = await fetch('https://weao.xyz/api/versions/current');
@@ -355,7 +354,6 @@ async function checkRobloxVersions() {
         } catch (err) { console.error("❌ Error polling live endpoint:", err.message); }
     }
 
-    // BETA / FUTURE — Windows, macOS (WEAO's /versions/future only exposes these two)
     if (versionConfig.robloxChannels?.beta) {
         try {
             const res = await fetch('https://weao.xyz/api/versions/future');
@@ -367,7 +365,6 @@ async function checkRobloxVersions() {
         } catch (err) { console.error("❌ Error polling future endpoint:", err.message); }
     }
 
-    // HIDDEN — Windows, macOS (parsed straight from Roblox's own DeployHistory.txt files)
     if (versionConfig.robloxChannels?.hidden) {
         try {
             const winEntry = await getLatestHiddenEntry('windows');
@@ -381,17 +378,10 @@ async function checkRobloxVersions() {
     }
 }
 
-// ---- Banwave auto-detection ------------------------------------------------
-// Roblox has no official "is there a banwave" API. The best community source is
-// robloxbanwave.vercel.app, which scores r/robloxhackers posts server-side and
-// caches that data every 5 minutes. Their scored status isn't exposed publicly —
-// only an RSS feed of recent posts is — so we approximate their ALL CLEAR / USE
-// CAUTION / NOT SAFE tiers ourselves from post recency + keyword matching. This
-// is a heuristic, not an exact mirror of their algorithm.
 const BANWAVE_RSS_URL = 'https://robloxbanwave.vercel.app/api/rss';
 const BANWAVE_ALERT_KEYWORDS = ['banwave', 'ban wave', 'banned', 'wave', 'hyperion', 'byfron', 'flagged', 'detected'];
-const BANWAVE_FETCH_INTERVAL = 4 * 60 * 1000; // stay under their 5-minute cache window
-let banwaveAutoStatus = 'none'; // 'none' | 'checking' | 'ongoing'
+const BANWAVE_FETCH_INTERVAL = 4 * 60 * 1000; 
+let banwaveAutoStatus = 'none'; 
 let banwaveLastFetch = 0;
 
 function parseRssItems(xml) {
@@ -413,12 +403,12 @@ function parseRssItems(xml) {
 async function fetchBanwaveAutoStatus() {
     try {
         const res = await fetch(BANWAVE_RSS_URL, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) return banwaveAutoStatus; // keep last known value on a failed fetch
+        if (!res.ok) return banwaveAutoStatus;
 
         const items = parseRssItems(await res.text());
         const now = Date.now();
-        let strongRecent = 0; // alert-keyword posts within the last 24h
-        let anyRecent = 0;    // alert-keyword posts within the last 72h
+        let strongRecent = 0; 
+        let anyRecent = 0;    
 
         for (const item of items) {
             if (!item.pubDate || isNaN(item.pubDate.getTime())) continue;
@@ -434,13 +424,10 @@ async function fetchBanwaveAutoStatus() {
         else banwaveAutoStatus = 'none';
     } catch (e) {
         console.error("⚠️ Failed to fetch banwave RSS feed:", e.message);
-        // keep last known status on error rather than flipping to "none"
     }
     return banwaveAutoStatus;
 }
 
-
-// resolving the current hidden ("version-hidden") build per platform.
 const DEPLOY_HISTORY_URLS = {
     windows: 'https://setup.rbxcdn.com/DeployHistory.txt',
     mac: 'https://setup.rbxcdn.com/mac/DeployHistory.txt'
@@ -638,7 +625,376 @@ client.on('messageCreate', async (message) => {
     globalBotLogs.push({ user: message.author.tag, command: `${prefix}${command} ${args.join(" ")}`.trim(), timestamp: new Date().toLocaleTimeString() });
     if (globalBotLogs.length > 150) globalBotLogs.shift();
 
-    // !setannounce Command (PERSISTED NOW)
+    // ==========================================
+    // 🪙 EAZYCOINS ECONOMY ENGINE & COMMANDS 🪙
+    // ==========================================
+
+    if (command === 'beg') {
+        const user = getEcoUser(message.author.id);
+        const gained = Math.floor(Math.random() * 250) + 50; 
+        user.coins += gained;
+        saveConfig();
+
+        const begEmbed = new EmbedBuilder()
+            .setColor(0xF1C40F)
+            .setTitle('🥺 Spare Change!')
+            .setDescription(`A generous stranger gave you **${gained.toLocaleString()} EazyCoins**!`)
+            .setFooter({ text: `Wallet: ${user.coins.toLocaleString()} EazyCoins` });
+
+        return message.reply({ embeds: [begEmbed] });
+    }
+
+    if (command === 'daily') {
+        const user = getEcoUser(message.author.id);
+        const cooldown = 24 * 60 * 60 * 1000;
+        if (Date.now() - user.lastDaily < cooldown) {
+            const remainingMs = cooldown - (Date.now() - user.lastDaily);
+            const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+            const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+            return sendError(message, `You have already claimed your daily bonus! Come back in **${hours}h ${minutes}m**.`);
+        }
+
+        const reward = Math.floor(Math.random() * 5000) + 2500; 
+        user.coins += reward;
+        user.lastDaily = Date.now();
+        saveConfig();
+
+        const dailyEmbed = new EmbedBuilder()
+            .setColor(0x2ECC71)
+            .setTitle('🎁 Daily EazyCoins Claimed!')
+            .setDescription(`You claimed your daily reward of **${reward.toLocaleString()} EazyCoins**!`)
+            .setFooter({ text: `Total Balance: ${user.coins.toLocaleString()} EazyCoins` });
+
+        return message.reply({ embeds: [dailyEmbed] });
+    }
+
+    if (command === 'balance' || command === 'bal') {
+        const targetMember = message.mentions.members.first() || message.member;
+        const user = getEcoUser(targetMember.id);
+
+        const balEmbed = new EmbedBuilder()
+            .setColor(0x3498DB)
+            .setTitle(`💰 ${targetMember.displayName}'s Balance`)
+            .addFields(
+                { name: 'Wallet', value: `**${user.coins.toLocaleString()}** EazyCoins`, inline: true },
+                { name: 'Crypto Company', value: user.company ? `**${user.company.name}** (\`${user.company.coinName}\`)` : '*None Linked*', inline: true }
+            )
+            .setFooter({ text: 'EazyCoins Economy Framework' });
+
+        return message.reply({ embeds: [balEmbed] });
+    }
+
+    if (command === 'cryptolaunch') {
+        const user = getEcoUser(message.author.id);
+
+        if (user.company) {
+            return sendError(message, `You already own a Crypto Company called **${user.company.name}**!`);
+        }
+
+        if (user.coins < 500000) {
+            return sendError(message, `You need at least **500,000 EazyCoins** to launch a Crypto Company. Current Balance: ${user.coins.toLocaleString()} EazyCoins.`);
+        }
+
+        const input = args.join(" ").split("|").map(s => s.trim());
+        if (input.length < 2 || !input[0] || !input[1]) {
+            return sendError(message, "Usage: `!cryptolaunch <Company Name> | <Coin Ticker/Name>`\nExample: `!cryptolaunch Moon Corp | MOON`");
+        }
+
+        const companyName = input[0];
+        const coinName = input[1].toUpperCase();
+
+        user.coins -= 500000;
+        user.company = {
+            name: companyName,
+            coinName: coinName,
+            holdings: 10000,
+            tokenPrice: Math.floor(Math.random() * 50) + 100
+        };
+        saveConfig();
+
+        const launchEmbed = new EmbedBuilder()
+            .setColor(0x9B59B6)
+            .setTitle('🚀 Crypto Company Launched!')
+            .setDescription(`Successfully founded **${companyName}**! *(FAKE / SIMULATED)*\n\n` +
+                `• **Coin Ticker:** \`${coinName}\`\n` +
+                `• **Initial Market Price:** \`${user.company.tokenPrice} EazyCoins\`\n` +
+                `• **Starting Reserve Holdings:** \`${user.company.holdings.toLocaleString()} ${coinName}\``)
+            .setFooter({ text: `500,000 EazyCoins deducted. Remaining: ${user.coins.toLocaleString()} EazyCoins` });
+
+        return message.reply({ embeds: [launchEmbed] });
+    }
+
+    if (command === 'cryptobuy') {
+        const user = getEcoUser(message.author.id);
+
+        if (!user.company) {
+            return sendError(message, "You must have a Crypto Company linked to execute trade orders! Create one using `!cryptolaunch <Name> | <Ticker>`.");
+        }
+
+        if (user.coins < 1000000) {
+            return sendError(message, `You must have at least **1,000,000 EazyCoins** to buy crypto! Current Balance: ${user.coins.toLocaleString()} EazyCoins.`);
+        }
+
+        const amountToBuy = parseInt(args[0]) || 100;
+        const currentPrice = user.company.tokenPrice;
+        const totalCost = amountToBuy * currentPrice;
+        const tradingFee = Math.floor(totalCost * 0.05);
+        const grandTotal = totalCost + tradingFee;
+
+        if (user.coins < grandTotal) {
+            return sendError(message, `Insufficient funds for this trade order. Total cost with 5% trading fee: **${grandTotal.toLocaleString()} EazyCoins**.`);
+        }
+
+        user.coins -= grandTotal;
+        user.company.holdings += amountToBuy;
+        if (!user.portfolio) user.portfolio = {};
+        user.portfolio[user.company.coinName] = (user.portfolio[user.company.coinName] || 0) + amountToBuy;
+        saveConfig();
+
+        const buyEmbed = new EmbedBuilder()
+            .setColor(0x2ECC71)
+            .setTitle('📈 Crypto Purchased!')
+            .setDescription(`Bought **${amountToBuy.toLocaleString()} ${user.company.coinName}** for **${totalCost.toLocaleString()} EazyCoins** *(FAKE / SIMULATED)*`)
+            .addFields(
+                { name: 'Price per Coin', value: `${currentPrice} EazyCoins`, inline: true },
+                { name: 'Trading Fee (5%)', value: `${tradingFee.toLocaleString()} EazyCoins`, inline: true },
+                { name: 'Total Holdings', value: `${user.company.holdings.toLocaleString()} ${user.company.coinName}`, inline: false }
+            )
+            .setFooter({ text: `${user.company.name} Crypto` });
+
+        return message.reply({ embeds: [buyEmbed] });
+    }
+
+    if (command === 'cryptoportfolio' || command === 'cryptoportfoilo') {
+        const user = getEcoUser(message.author.id);
+
+        if (!user.company) {
+            return sendError(message, "You do not own or link to any active Crypto Company profile. Use `!cryptolaunch` first.");
+        }
+
+        const holdings = user.company.holdings;
+        const price = user.company.tokenPrice;
+        const totalVal = holdings * price;
+
+        const portEmbed = new EmbedBuilder()
+            .setColor(0x34495E)
+            .setTitle(`📊 ${message.author.username}'s Crypto Portfolio`)
+            .setDescription(`*(Simulated Asset Management)*\n\n` +
+                `**Company:** ${user.company.name}\n` +
+                `**Asset Ticker:** \`${user.company.coinName}\`\n` +
+                `**Token Holdings:** \`${holdings.toLocaleString()} ${user.company.coinName}\`\n` +
+                `**Current Value:** \`${price} EazyCoins / token\`\n` +
+                `**Estimated Portfolio Valuation:** \`${totalVal.toLocaleString()} EazyCoins\``)
+            .setFooter({ text: 'EazyCoins Crypto Market' });
+
+        return message.reply({ embeds: [portEmbed] });
+    }
+
+    if (command === 'gamble') {
+        const user = getEcoUser(message.author.id);
+        const bet = parseInt(args[0]);
+
+        if (isNaN(bet) || bet <= 0) {
+            return sendError(message, "Please state a valid amount of EazyCoins to gamble! Usage: `!gamble [amount]`");
+        }
+
+        if (user.coins < bet) {
+            return sendError(message, `You do not have enough EazyCoins to place that bet! Current Balance: ${user.coins.toLocaleString()} EazyCoins.`);
+        }
+
+        const won = Math.random() >= 0.55; 
+        if (won) {
+            const earnings = bet * 2;
+            user.coins += bet;
+            saveConfig();
+            return message.reply({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor(0x2ECC71)
+                        .setTitle('🎰 GAMBLE WIN!')
+                        .setDescription(`🎉 Double or Nothing! You won **${earnings.toLocaleString()} EazyCoins**!`)
+                        .setFooter({ text: `New Balance: ${user.coins.toLocaleString()} EazyCoins` })
+                ]
+            });
+        } else {
+            user.coins -= bet;
+            saveConfig();
+            return message.reply({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor(0xE74C3C)
+                        .setTitle('🎰 GAMBLE LOSS!')
+                        .setDescription(`💸 You gambled away **${bet.toLocaleString()} EazyCoins** into thin air...`)
+                        .setFooter({ text: `New Balance: ${user.coins.toLocaleString()} EazyCoins` })
+                ]
+            });
+        }
+    }
+
+    if (command === 'blackjack') {
+        const user = getEcoUser(message.author.id);
+        const bet = parseInt(args[0]);
+
+        if (isNaN(bet) || bet <= 0) {
+            return sendError(message, "Please enter a valid amount to bet! Usage: `!blackjack [number]`");
+        }
+
+        if (user.coins < bet) {
+            return sendError(message, `You do not have enough EazyCoins for this table. Wallet: ${user.coins.toLocaleString()} EazyCoins.`);
+        }
+
+        const playerHand = Math.floor(Math.random() * 10) + 12; 
+        const dealerHand = Math.floor(Math.random() * 10) + 12; 
+
+        let resultText = "";
+        let win = false;
+
+        if (playerHand > 21) {
+            resultText = "💥 You Busted!";
+        } else if (dealerHand > 21 || playerHand > dealerHand) {
+            resultText = "🃏 You Beat the Dealer!";
+            win = true;
+        } else if (playerHand === dealerHand) {
+            resultText = "🤝 Push! It's a Tie.";
+        } else {
+            resultText = "📉 Dealer Wins!";
+        }
+
+        if (win) {
+            user.coins += bet;
+            saveConfig();
+        } else if (resultText !== "🤝 Push! It's a Tie.") {
+            user.coins -= bet;
+            saveConfig();
+        }
+
+        const bjEmbed = new EmbedBuilder()
+            .setColor(win ? 0x2ECC71 : 0xE74C3C)
+            .setTitle('🃏 Blackjack Table')
+            .setDescription(`**${resultText}**\n\n` +
+                `• **Your Score:** \`${playerHand}\`\n` +
+                `• **Dealer Score:** \`${dealerHand}\``)
+            .setFooter({ text: `Wallet: ${user.coins.toLocaleString()} EazyCoins` });
+
+        return message.reply({ embeds: [bjEmbed] });
+    }
+
+    if (command === 'huntcoins') {
+        const user = getEcoUser(message.author.id);
+        const animals = [
+            { name: 'Rabbit 🐇', payout: 150 },
+            { name: 'Wild Boar 🐗', payout: 400 },
+            { name: 'Deer 🦌', payout: 750 },
+            { name: 'Bear 🐻', payout: 1500 },
+            { name: 'Legendary Dragon 🐉', payout: 5000 }
+        ];
+
+        const caught = animals[Math.floor(Math.random() * animals.length)];
+        user.coins += caught.payout;
+        saveConfig();
+
+        const huntEmbed = new EmbedBuilder()
+            .setColor(0x2ECC71)
+            .setTitle('🏹 Coin Hunt Successful!')
+            .setDescription(`You went hunting and tracked down a **${caught.name}**!\nSold the trophy for **${caught.payout.toLocaleString()} EazyCoins**!`)
+            .setFooter({ text: `Total Balance: ${user.coins.toLocaleString()} EazyCoins` });
+
+        return message.reply({ embeds: [huntEmbed] });
+    }
+
+    if (command === 'rob') {
+        const user = getEcoUser(message.author.id);
+        const targetMember = message.mentions.members.first();
+
+        if (!targetMember) {
+            const randomStolen = Math.floor(Math.random() * 500) + 100;
+            user.coins += randomStolen;
+            saveConfig();
+            return message.reply({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor(0xE67E22)
+                        .setTitle('🥷 Street Heist')
+                        .setDescription(`You pickpocketed a passerby on the street and made off with **${randomStolen.toLocaleString()} EazyCoins**!`)
+                        .setFooter({ text: `Wallet: ${user.coins.toLocaleString()} EazyCoins` })
+                ]
+            });
+        }
+
+        if (targetMember.id === message.author.id) {
+            return sendError(message, "You can't rob yourself!");
+        }
+
+        const targetUser = getEcoUser(targetMember.id);
+        if (targetUser.coins < 200) {
+            return sendError(message, `**${targetMember.displayName}** is too poor to be robbed!`);
+        }
+
+        const success = Math.random() >= 0.5;
+        if (success) {
+            const stolen = Math.floor(targetUser.coins * (Math.random() * 0.3 + 0.1)); 
+            targetUser.coins -= stolen;
+            user.coins += stolen;
+            saveConfig();
+
+            return message.reply({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor(0x2ECC71)
+                        .setTitle('🥷 Robbery Successful!')
+                        .setDescription(`You mugged ${targetMember} and successfully stole **${stolen.toLocaleString()} EazyCoins**!`)
+                        .setFooter({ text: `Your Balance: ${user.coins.toLocaleString()} EazyCoins` })
+                ]
+            });
+        } else {
+            const fine = Math.min(user.coins, 300);
+            user.coins -= fine;
+            saveConfig();
+
+            return message.reply({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor(0xFF3333)
+                        .setTitle('🚨 Robbery Failed!')
+                        .setDescription(`You got caught red-handed attempting to rob ${targetMember}! Paid a fine of **${fine.toLocaleString()} EazyCoins**.`)
+                        .setFooter({ text: `Your Balance: ${user.coins.toLocaleString()} EazyCoins` })
+                ]
+            });
+        }
+    }
+
+    if (command === 'breakinto') {
+        const user = getEcoUser(message.author.id);
+        const success = Math.random() >= 0.4; 
+
+        if (success) {
+            const loot = Math.floor(Math.random() * 2500) + 500;
+            user.coins += loot;
+            saveConfig();
+
+            const breakEmbed = new EmbedBuilder()
+                .setColor(0x2ECC71)
+                .setTitle('🏠 House Break-In Successful!')
+                .setDescription(`*(SIMULATED / GAME)*\nYou lockpicked a house safe and stole **${loot.toLocaleString()} EazyCoins**!`)
+                .setFooter({ text: `Wallet: ${user.coins.toLocaleString()} EazyCoins` });
+
+            return message.reply({ embeds: [breakEmbed] });
+        } else {
+            const penalty = Math.min(user.coins, 1000);
+            user.coins -= penalty;
+            saveConfig();
+
+            const failEmbed = new EmbedBuilder()
+                .setColor(0xFF3333)
+                .setTitle('🚨 Alarm Triggered!')
+                .setDescription(`*(SIMULATED / GAME)*\nThe house alarm went off! You dropped **${penalty.toLocaleString()} EazyCoins** while escaping!`)
+                .setFooter({ text: `Wallet: ${user.coins.toLocaleString()} EazyCoins` });
+
+            return message.reply({ embeds: [failEmbed] });
+        }
+    }
+
+    // !setannounce Command 
     if (command === 'setannounce') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need the `Manage Channels` permission to run this command.");
@@ -745,7 +1101,7 @@ client.on('messageCreate', async (message) => {
         );
     }
 
-    // !statusvc Command (REVISED & FIXED RE-CREATION/PERSISTENCE)
+    // !statusvc Command
     if (command === 'statusvc') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need the `Manage Channels` permission to run this command.");
@@ -754,7 +1110,6 @@ client.on('messageCreate', async (message) => {
         try {
             const guild = message.guild;
 
-            // Delete old configured status VCs if they still exist to prevent duplicates
             if (versionConfig.statusVCs?.crashy) {
                 const oldCrashy = await guild.channels.fetch(versionConfig.statusVCs.crashy).catch(() => null);
                 if (oldCrashy) await oldCrashy.delete().catch(() => {});
@@ -810,8 +1165,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // !banwave Command — the VC auto-updates itself from the community RSS feed on its
-    // own every ~4 minutes. This command is just for a manual override (or clearing one).
+    // !banwave Command
     if (command === 'banwave') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
             return sendError(message, "You need the `Manage Server` permission to run this command.");
@@ -823,7 +1177,7 @@ client.on('messageCreate', async (message) => {
             versionConfig.banwaveOverride = null;
             versionConfig.banwaveOverrideExpiry = null;
             saveConfig();
-            banwaveLastFetch = 0; // force an immediate re-check instead of waiting for the next cycle
+            banwaveLastFetch = 0; 
             await updateStatusVoiceChannels();
             return sendSuccess(message, "Banwave status is back to fully automatic (source: robloxbanwave.vercel.app).");
         }
@@ -851,7 +1205,7 @@ client.on('messageCreate', async (message) => {
         return sendSuccess(message, `Banwave status manually overridden to **${labels[versionConfig.banwaveOverride]}**${durationNote}.`);
     }
 
-    // !setrblxupd / !setbetarblx / !sethidrblx Commands (PERSISTED NOW)
+    // !setrblxupd / !setbetarblx / !sethidrblx Commands
     if (command === 'setrblxupd' || command === 'setbetarblx' || command === 'sethidrblx') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need the `Manage Channels` permission to run this command.");
@@ -913,7 +1267,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // !setupdatechannel Command (PERSISTED NOW)
+    // !setupdatechannel Command
     if (command === 'setupdatechannel') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need the `Manage Channels` permission to run this command.");
@@ -1014,7 +1368,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // !setstatusupd Command (PERSISTED NOW)
+    // !setstatusupd Command
     if (command === 'setstatusupd') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
             return sendError(message, "You need the `Manage Channels` permission to run this command.");
@@ -1175,6 +1529,22 @@ client.on('messageCreate', async (message) => {
 
     if (command === 'help') {
         const helpSections = [
+            {
+                title: '🪙 EazyCoins Economy Framework',
+                lines: [
+                    '`beg` — Beg for a small random sum of EazyCoins.',
+                    '`daily` — Claim your daily allocation of EazyCoins.',
+                    '`balance / bal` — View your current EazyCoins and crypto company standing.',
+                    '`gamble [amount]` — Gamble away EazyCoins in double-or-nothing.',
+                    '`blackjack [amount]` — Play a hand of blackjack against the dealer.',
+                    '`huntcoins` — Track down wild animals and sell them for EazyCoins.',
+                    '`rob [@mention]` — Attempt to steal EazyCoins from another user or street passersby.',
+                    '`breakinto` — Break into virtual houses to steal EazyCoins (fake/game).',
+                    '`cryptolaunch <Name> | <Ticker>` — Launch your custom simulated Crypto Company (Costs 500,000 EazyCoins).',
+                    '`cryptobuy [amount]` — Purchase company tokens (Requires 1,000,000 EazyCoins & linked company).',
+                    '`cryptoportfolio` — Inspect current crypto holdings and simulated market evaluation.'
+                ]
+            },
             {
                 title: '🧰 Core Utilities',
                 lines: [
@@ -1761,7 +2131,6 @@ client.on('messageCreate', async (message) => {
                     const data = await res.json();
                     return { ...site, status: data ? '🟢 Working' : '🟠 Degraded' };
                 }
-                // 'ping' — no public API, so reachability is the best we can honestly report
                 return { ...site, status: '🟢 Working' };
             } catch {
                 return { ...site, status: '🔴 Down' };
