@@ -1210,19 +1210,42 @@ client.on('messageCreate', async (message) => {
             : null;
 
         const sendClassicEmbed = () => {
-            const cmdsEmbed = new EmbedBuilder()
-                .setColor(0x3498DB)
-                .setDescription(
-                    (hasHelpBanner ? '' : `# H E L P\n\n`) +
-                    `**Status:** ${statusDot}\n\n` +
-                    `Use the prefix \`${prefix}\` before executing any commands listed below.\n\n` +
-                    helpSections.map(s => `**${s.title}**\n${s.lines.map(l => `• ${l}`).join('\n')}`).join('\n\n')
-                );
-            if (hasHelpBanner) cmdsEmbed.setImage('attachment://help_banner.png');
+            const headerBlock = (hasHelpBanner ? '' : `# H E L P\n\n`) +
+                `**Status:** ${statusDot}\n\n` +
+                `Use the prefix \`${prefix}\` before executing any commands listed below.`;
+
+            const sectionBlocks = helpSections.map(s => `**${s.title}**\n${s.lines.map(l => `• ${l}`).join('\n')}`);
+            const allBlocks = [headerBlock, ...sectionBlocks];
+
+            // Discord's embed description hard-caps at 4096 chars — pack blocks into as few
+            // embeds as possible while staying safely under that (so new help sections never
+            // silently break this command again).
+            const MAX_DESC = 4000;
+            const descriptions = [];
+            let current = '';
+            for (const block of allBlocks) {
+                const candidate = current ? `${current}\n\n${block}` : block;
+                if (candidate.length > MAX_DESC && current) {
+                    descriptions.push(current);
+                    current = block;
+                } else {
+                    current = candidate;
+                }
+            }
+            if (current) descriptions.push(current);
+
+            const embeds = descriptions.map((desc, i) => {
+                const e = new EmbedBuilder().setColor(0x3498DB).setDescription(desc);
+                if (i === 0 && hasHelpBanner) e.setImage('attachment://help_banner.png');
+                return e;
+            });
+
             return message.reply({
-                embeds: [cmdsEmbed],
+                embeds,
                 components: [getBotRow],
                 files: hasHelpBanner ? [helpBannerAttachment] : []
+            }).catch((err) => {
+                console.error("⚠️ Failed to send help embed:", err.message);
             });
         };
 
