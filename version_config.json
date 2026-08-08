@@ -18,8 +18,8 @@
     },
     "lastVersions": {
         "live": {
-            "windows": null,
-            "mac": null,
+            "windows": "version-d584fb6c717a43d9",
+            "mac": "version-897f957153bd4d18",
             "android": null,
             "ios": null
         },
