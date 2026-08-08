@@ -1,0 +1,35 @@
+{
+    "channels": [],
+    "robloxChannels": {
+        "live": null,
+        "beta": null,
+        "hidden": null
+    },
+    "updateChannel": null,
+    "statusUpdateChannel": null,
+    "announceChannel": null,
+    "statusVCs": {
+        "crashy": "1535532212035002390",
+        "eazy": "1535532213930561608"
+    },
+    "maintenanceMode": {
+        "eazy": false,
+        "crashy": false
+    },
+    "lastVersions": {
+        "live": {
+            "windows": null,
+            "mac": null,
+            "android": null,
+            "ios": null
+        },
+        "beta": {
+            "windows": null,
+            "mac": null
+        },
+        "hidden": {
+            "windows": null,
+            "mac": null
+        }
+    }
+}
