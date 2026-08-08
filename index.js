@@ -38,8 +38,10 @@ let versionConfig = {
     updateChannel: null,
     statusUpdateChannel: null,
     announceChannel: null,
-    statusVCs: { crashy: null, eazy: null },
+    statusVCs: { crashy: null, eazy: null, banwave: null },
     maintenanceMode: { eazy: false, crashy: false },
+    banwaveOverride: null, // 'none' | 'checking' | 'ongoing' | null (null = fully automatic)
+    banwaveOverrideExpiry: null, // ms timestamp, or null = no expiry until cleared
     lastVersions: {
         live: { windows: null, mac: null, android: null, ios: null },
         beta: { windows: null, mac: null },
@@ -54,7 +56,7 @@ const LAST_VERSIONS_DEFAULTS = {
     hidden: { windows: null, mac: null }
 };
 
-const BOT_VERSION = '1.13.0'; 
+const BOT_VERSION = '1.15.0'; 
 
 function runConfigMigrations() {
     // Backwards-compatible migrations
@@ -81,7 +83,15 @@ function runConfigMigrations() {
         versionConfig.robloxChannels = { live: null, beta: null, hidden: null };
     }
     if (!versionConfig.statusVCs || typeof versionConfig.statusVCs !== 'object') {
-        versionConfig.statusVCs = { crashy: null, eazy: null };
+        versionConfig.statusVCs = { crashy: null, eazy: null, banwave: null };
+    } else if (!('banwave' in versionConfig.statusVCs)) {
+        versionConfig.statusVCs.banwave = null;
+    }
+    if (versionConfig.banwaveOverride && !['none', 'checking', 'ongoing'].includes(versionConfig.banwaveOverride)) {
+        versionConfig.banwaveOverride = null;
+    }
+    if (typeof versionConfig.banwaveOverrideExpiry !== 'number') {
+        versionConfig.banwaveOverrideExpiry = null;
     }
 }
 
@@ -253,6 +263,35 @@ async function updateStatusVoiceChannels() {
         }
     }
 
+    // Banwave status: manual override wins if active (and not expired), otherwise
+    // fall back to the auto-detected value from the community RSS feed.
+    const overrideActive = versionConfig.banwaveOverride &&
+        (!versionConfig.banwaveOverrideExpiry || Date.now() < versionConfig.banwaveOverrideExpiry);
+
+    let effectiveBanwaveStatus;
+    if (overrideActive) {
+        effectiveBanwaveStatus = versionConfig.banwaveOverride;
+    } else {
+        if (versionConfig.banwaveOverride && !overrideActive) {
+            // Override just expired — clear it so we don't keep checking the clock every cycle
+            versionConfig.banwaveOverride = null;
+            versionConfig.banwaveOverrideExpiry = null;
+            saveConfig();
+        }
+        if (Date.now() - banwaveLastFetch > BANWAVE_FETCH_INTERVAL) {
+            banwaveLastFetch = Date.now();
+            await fetchBanwaveAutoStatus();
+        }
+        effectiveBanwaveStatus = banwaveAutoStatus;
+    }
+
+    let banwaveText = "Banwave : No 🔴";
+    if (effectiveBanwaveStatus === 'checking') {
+        banwaveText = "Banwave : Checking/Possible 🟠";
+    } else if (effectiveBanwaveStatus === 'ongoing') {
+        banwaveText = "Banwave : Ongoing 🟢";
+    }
+
     if (versionConfig.statusVCs?.eazy) {
         const chan = await client.channels.fetch(versionConfig.statusVCs.eazy).catch(() => null);
         if (chan && chan.name !== eazyText) await chan.setName(eazyText).catch(() => {});
@@ -260,6 +299,10 @@ async function updateStatusVoiceChannels() {
     if (versionConfig.statusVCs?.crashy) {
         const chan = await client.channels.fetch(versionConfig.statusVCs.crashy).catch(() => null);
         if (chan && chan.name !== crashyText) await chan.setName(crashyText).catch(() => {});
+    }
+    if (versionConfig.statusVCs?.banwave) {
+        const chan = await client.channels.fetch(versionConfig.statusVCs.banwave).catch(() => null);
+        if (chan && chan.name !== banwaveText) await chan.setName(banwaveText).catch(() => {});
     }
 }
 
@@ -338,7 +381,65 @@ async function checkRobloxVersions() {
     }
 }
 
-// Roblox's own deploy-history files (the same source Roblox's bootstrappers rely on) for
+// ---- Banwave auto-detection ------------------------------------------------
+// Roblox has no official "is there a banwave" API. The best community source is
+// robloxbanwave.vercel.app, which scores r/robloxhackers posts server-side and
+// caches that data every 5 minutes. Their scored status isn't exposed publicly —
+// only an RSS feed of recent posts is — so we approximate their ALL CLEAR / USE
+// CAUTION / NOT SAFE tiers ourselves from post recency + keyword matching. This
+// is a heuristic, not an exact mirror of their algorithm.
+const BANWAVE_RSS_URL = 'https://robloxbanwave.vercel.app/api/rss';
+const BANWAVE_ALERT_KEYWORDS = ['banwave', 'ban wave', 'banned', 'wave', 'hyperion', 'byfron', 'flagged', 'detected'];
+const BANWAVE_FETCH_INTERVAL = 4 * 60 * 1000; // stay under their 5-minute cache window
+let banwaveAutoStatus = 'none'; // 'none' | 'checking' | 'ongoing'
+let banwaveLastFetch = 0;
+
+function parseRssItems(xml) {
+    const items = [];
+    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+    let match;
+    while ((match = itemRegex.exec(xml)) !== null) {
+        const block = match[1];
+        const titleMatch = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+        const dateMatch = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+        items.push({
+            title: titleMatch ? titleMatch[1].trim() : '',
+            pubDate: dateMatch ? new Date(dateMatch[1].trim()) : null
+        });
+    }
+    return items;
+}
+
+async function fetchBanwaveAutoStatus() {
+    try {
+        const res = await fetch(BANWAVE_RSS_URL, { signal: AbortSignal.timeout(5000) });
+        if (!res.ok) return banwaveAutoStatus; // keep last known value on a failed fetch
+
+        const items = parseRssItems(await res.text());
+        const now = Date.now();
+        let strongRecent = 0; // alert-keyword posts within the last 24h
+        let anyRecent = 0;    // alert-keyword posts within the last 72h
+
+        for (const item of items) {
+            if (!item.pubDate || isNaN(item.pubDate.getTime())) continue;
+            const hoursAgo = (now - item.pubDate.getTime()) / 3600000;
+            const isAlertLike = BANWAVE_ALERT_KEYWORDS.some(k => item.title.toLowerCase().includes(k));
+            if (!isAlertLike) continue;
+            if (hoursAgo <= 24) strongRecent++;
+            if (hoursAgo <= 72) anyRecent++;
+        }
+
+        if (strongRecent >= 2) banwaveAutoStatus = 'ongoing';
+        else if (strongRecent >= 1 || anyRecent >= 3) banwaveAutoStatus = 'checking';
+        else banwaveAutoStatus = 'none';
+    } catch (e) {
+        console.error("⚠️ Failed to fetch banwave RSS feed:", e.message);
+        // keep last known status on error rather than flipping to "none"
+    }
+    return banwaveAutoStatus;
+}
+
+
 // resolving the current hidden ("version-hidden") build per platform.
 const DEPLOY_HISTORY_URLS = {
     windows: 'https://setup.rbxcdn.com/DeployHistory.txt',
@@ -662,6 +763,10 @@ client.on('messageCreate', async (message) => {
                 const oldEazy = await guild.channels.fetch(versionConfig.statusVCs.eazy).catch(() => null);
                 if (oldEazy) await oldEazy.delete().catch(() => {});
             }
+            if (versionConfig.statusVCs?.banwave) {
+                const oldBanwave = await guild.channels.fetch(versionConfig.statusVCs.banwave).catch(() => null);
+                if (oldBanwave) await oldBanwave.delete().catch(() => {});
+            }
 
             const channelPermissions = [
                 {
@@ -683,9 +788,16 @@ client.on('messageCreate', async (message) => {
                 permissionOverwrites: channelPermissions
             });
 
+            const banwaveVC = await guild.channels.create({
+                name: 'Banwave : No 🔴',
+                type: ChannelType.GuildVoice,
+                permissionOverwrites: channelPermissions
+            });
+
             versionConfig.statusVCs = {
                 crashy: crashyVC.id,
-                eazy: eazyVC.id
+                eazy: eazyVC.id,
+                banwave: banwaveVC.id
             };
             saveConfig();
 
@@ -696,6 +808,47 @@ client.on('messageCreate', async (message) => {
             console.error(err);
             return sendError(message, "Failed to create status channels. Check my server permissions hierarchy.");
         }
+    }
+
+    // !banwave Command — the VC auto-updates itself from the community RSS feed on its
+    // own every ~4 minutes. This command is just for a manual override (or clearing one).
+    if (command === 'banwave') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+            return sendError(message, "You need the `Manage Server` permission to run this command.");
+        }
+
+        const input = (args[0] || '').toLowerCase();
+
+        if (input === 'auto' || input === 'clear' || input === 'reset') {
+            versionConfig.banwaveOverride = null;
+            versionConfig.banwaveOverrideExpiry = null;
+            saveConfig();
+            banwaveLastFetch = 0; // force an immediate re-check instead of waiting for the next cycle
+            await updateStatusVoiceChannels();
+            return sendSuccess(message, "Banwave status is back to fully automatic (source: robloxbanwave.vercel.app).");
+        }
+
+        const validStates = {
+            'none': 'none', 'no': 'none', 'off': 'none',
+            'checking': 'checking', 'possible': 'checking',
+            'ongoing': 'ongoing', 'yes': 'ongoing', 'on': 'ongoing'
+        };
+
+        if (!validStates[input]) {
+            return sendError(message, "Usage: `!banwave <none/checking/ongoing>` to override, or `!banwave auto` to go back to automatic detection.");
+        }
+
+        const minutesArg = parseInt(args[1], 10);
+        const durationMinutes = !isNaN(minutesArg) && minutesArg > 0 ? minutesArg : null;
+
+        versionConfig.banwaveOverride = validStates[input];
+        versionConfig.banwaveOverrideExpiry = durationMinutes ? Date.now() + durationMinutes * 60000 : null;
+        saveConfig();
+        await updateStatusVoiceChannels();
+
+        const labels = { none: '🔴 No Banwave', checking: '🟠 Checking / Possible', ongoing: '🟢 Ongoing Banwave' };
+        const durationNote = durationMinutes ? ` for ${durationMinutes} minute(s), then back to auto` : ' until `!banwave auto` is run';
+        return sendSuccess(message, `Banwave status manually overridden to **${labels[versionConfig.banwaveOverride]}**${durationNote}.`);
     }
 
     // !setrblxupd / !setbetarblx / !sethidrblx Commands (PERSISTED NOW)
@@ -1060,6 +1213,7 @@ client.on('messageCreate', async (message) => {
                     '`check [name]` — Query structural exploit bypass signatures.',
                     '`scripts` — List Roblox script sites with live API status.',
                     '`statusvc` — Automatically setup channels layout to track bot status.',
+                    '`banwave <none/checking/ongoing> [minutes]` — Manually override the (self-updating) banwave VC. `!banwave auto` to clear it.',
                     '`maintenance @bot [true/false]` — Toggle Maintenance mode for this bot **or crashy** (restricted).'
                 ]
             },
