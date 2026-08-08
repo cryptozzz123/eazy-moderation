@@ -7,7 +7,7 @@
     },
     "updateChannel": null,
     "statusUpdateChannel": null,
-    "announceChannel": null,
+    "announceChannel": "1512289679376912484",
     "statusVCs": {
         "crashy": "1535532212035002390",
         "eazy": "1535532213930561608"
