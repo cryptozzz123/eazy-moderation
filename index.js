@@ -54,7 +54,7 @@ const LAST_VERSIONS_DEFAULTS = {
     hidden: { windows: null, mac: null }
 };
 
-const BOT_VERSION = '1.13.0'; 
+const BOT_VERSION = '1.14.0'; 
 
 if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -114,9 +114,20 @@ let economyData = {
     lastHunt: {},          // userId -> timestamp
     lastRob: {},            // userId -> timestamp
     lastBreakin: {},        // userId -> timestamp
+    lastDaily: {},           // userId -> timestamp
+    dailyStreak: {},         // userId -> consecutive daily-claim streak
     linkedCompany: {},      // userId -> true once they've used !cryptolaunch
     companies: JSON.parse(JSON.stringify(DEFAULT_ECONOMY_COMPANIES)), // key -> { name, ownerId, price }
-    holdings: {}             // userId -> { companyKey: amount }
+    holdings: {},             // userId -> { companyKey: amount }
+    jackpotPot: 0,             // shared pot for !jackpot — grows on every loss, winner takes it all
+    lottery: {                  // shared ticket-based lottery pool for !lottery
+        pot: 0,
+        tickets: {},              // userId -> ticket count
+        lastChannelId: null,       // channel to announce the next draw result in
+        lastDrawAt: Date.now(),
+        lastWinner: null,
+        lastWinAmount: 0
+    }
 };
 
 if (fs.existsSync(ECONOMY_PATH)) {
@@ -125,8 +136,16 @@ if (fs.existsSync(ECONOMY_PATH)) {
         economyData = Object.assign(economyData, JSON.parse(fileData));
         // Make sure the built-in coins always exist, even against an older economy file
         economyData.companies = Object.assign(JSON.parse(JSON.stringify(DEFAULT_ECONOMY_COMPANIES)), economyData.companies);
-        for (const key of ['wallets', 'lastBeg', 'lastHunt', 'lastRob', 'lastBreakin', 'linkedCompany', 'holdings']) {
+        for (const key of ['wallets', 'lastBeg', 'lastHunt', 'lastRob', 'lastBreakin', 'lastDaily', 'dailyStreak', 'linkedCompany', 'holdings']) {
             if (!economyData[key] || typeof economyData[key] !== 'object') economyData[key] = {};
+        }
+        if (typeof economyData.jackpotPot !== 'number' || isNaN(economyData.jackpotPot)) economyData.jackpotPot = 0;
+        if (!economyData.lottery || typeof economyData.lottery !== 'object') {
+            economyData.lottery = { pot: 0, tickets: {}, lastChannelId: null, lastDrawAt: Date.now(), lastWinner: null, lastWinAmount: 0 };
+        } else {
+            if (typeof economyData.lottery.pot !== 'number' || isNaN(economyData.lottery.pot)) economyData.lottery.pot = 0;
+            if (!economyData.lottery.tickets || typeof economyData.lottery.tickets !== 'object') economyData.lottery.tickets = {};
+            if (!economyData.lottery.lastDrawAt) economyData.lottery.lastDrawAt = Date.now();
         }
     } catch (e) {
         console.error("⚠️ Failed to parse economy_config.json, starting fresh.", e);
@@ -198,6 +217,53 @@ function handValue(hand) {
 function formatHand(hand) {
     return hand.map(c => `${c.rank}${c.suit}`).join(' ');
 }
+const LOTTERY_DRAW_INTERVAL = 60 * 60 * 1000; // 1 hour
+
+// Picks a winner weighted by ticket count, pays out the full pot, and announces
+// the result in the channel the most recent ticket was bought in (if still reachable).
+async function drawLottery() {
+    const ticketEntries = Object.entries(economyData.lottery.tickets);
+    if (ticketEntries.length === 0 || economyData.lottery.pot <= 0) {
+        economyData.lottery.lastDrawAt = Date.now();
+        saveEconomy();
+        return;
+    }
+
+    const totalTickets = ticketEntries.reduce((sum, [, count]) => sum + count, 0);
+    let roll = Math.random() * totalTickets;
+    let winnerId = ticketEntries[0][0];
+    for (const [userId, count] of ticketEntries) {
+        if (roll < count) { winnerId = userId; break; }
+        roll -= count;
+    }
+
+    const winnings = economyData.lottery.pot;
+    addWallet(winnerId, winnings);
+
+    const announceChannelId = economyData.lottery.lastChannelId;
+    economyData.lottery.lastWinner = winnerId;
+    economyData.lottery.lastWinAmount = winnings;
+    economyData.lottery.pot = 0;
+    economyData.lottery.tickets = {};
+    economyData.lottery.lastDrawAt = Date.now();
+    saveEconomy();
+
+    if (announceChannelId) {
+        try {
+            const channel = await client.channels.fetch(announceChannelId).catch(() => null);
+            if (channel?.isTextBased()) {
+                const winnerUser = await client.users.fetch(winnerId).catch(() => null);
+                const embed = new EmbedBuilder()
+                    .setColor(0xF1C40F)
+                    .setTitle('🎟️ Lottery Draw Results!')
+                    .setDescription(`Congratulations to **${winnerUser ? winnerUser.username : `<@${winnerId}>`}**! They won the pot of **${winnings.toLocaleString()} eazycoins**!`)
+                    .setFooter({ text: 'Eazy Casino • Lottery' });
+                await channel.send({ embeds: [embed] }).catch(() => {});
+            }
+        } catch (e) { console.error("⚠️ Failed to announce lottery draw:", e.message); }
+    }
+}
+
 // ================= End EazyCoins Economy System Engine =================
 
 const EXECUTOR_IMAGES = {
@@ -231,6 +297,7 @@ client.once('ready', () => {
         checkRobloxVersions();
         updateStatusVoiceChannels();
     }, 60000);
+    setInterval(drawLottery, LOTTERY_DRAW_INTERVAL);
     checkRobloxVersions();
     updateStatusVoiceChannels();
 });
@@ -1073,14 +1140,26 @@ client.on('messageCreate', async (message) => {
                 lines: [
                     '`beg` — Beg for a small handout of EazyCoins.',
                     '`balance [@user]` — Check your (or someone else\'s) wallet.',
+                    '`daily` — Claim your daily EazyCoins reward (streak bonus included).',
                     '`huntcoins` — Hunt animals in the wild for EazyCoins.',
                     '`rob [@user]` — Attempt to rob a random member or a specific target.',
                     '`breakinto` — Break into a house and steal whatever\'s inside.',
-                    '`gamble <amount/all>` — Flip a coin, double or lose your bet.',
-                    '`blackjack <amount/all>` — Play a full interactive round of blackjack.',
                     '`cryptolaunch <name>` — Launch your own fake crypto company (500,000 EazyCoins).',
                     '`cryptobuy <coin> <amount>` — Buy into a crypto company (needs 1,000,000+ net worth + a linked company).',
                     '`cryptoportfolio` — View all your crypto holdings and total value.'
+                ]
+            },
+            {
+                title: '🎰 Casino & Gambling',
+                lines: [
+                    '`gamble <amount/all>` — Flip a coin, double or lose your bet.',
+                    '`blackjack <amount/all>` — Play a full interactive round of blackjack.',
+                    '`slots <amount/all>` — Spin the reels for a multiplier payout.',
+                    '`coinflip <amount/all> <heads/tails>` — Call the flip yourself.',
+                    '`dice <amount/all>` — Roll against the house, higher roll wins.',
+                    '`roulette <amount/all> <red/black/green/0-36>` — Classic roulette table odds.',
+                    '`jackpot <amount/all>` — Throw into the shared pot for a chance to win it all.',
+                    '`lottery [tickets]` — Buy lottery tickets or check the pot/next draw (hourly draw).'
                 ]
             },
             {
@@ -2135,6 +2214,272 @@ client.on('messageCreate', async (message) => {
             .setTitle(`📊 ${message.author.username}'s Crypto Portfolio`)
             .addFields(...fields, { name: '💰 Total Portfolio Value', value: `${Math.round(totalValue).toLocaleString()} eazycoins`, inline: false })
             .setFooter({ text: 'Eazy Crypto • Portfolio' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // ================= Gamble Update Commands =================
+
+    // !daily
+    if (command === 'daily') {
+        const DAILY_COOLDOWN = 24 * 60 * 60 * 1000;
+        const last = economyData.lastDaily[message.author.id] || 0;
+        const remaining = DAILY_COOLDOWN - (Date.now() - last);
+        if (remaining > 0) {
+            const hours = Math.floor(remaining / 3600000);
+            const minutes = Math.floor((remaining % 3600000) / 60000);
+            return sendError(message, `You've already claimed your daily reward. Come back in **${hours}h ${minutes}m**.`);
+        }
+
+        // Streak continues if claimed again within 48h of the last claim
+        const prevStreak = economyData.dailyStreak[message.author.id] || 0;
+        const streak = (last !== 0 && (Date.now() - last) < (48 * 60 * 60 * 1000)) ? prevStreak + 1 : 1;
+        economyData.dailyStreak[message.author.id] = streak;
+        economyData.lastDaily[message.author.id] = Date.now();
+
+        const base = Math.floor(Math.random() * 1500) + 1000; // 1000-2500
+        const streakBonus = Math.min(streak - 1, 20) * 100; // +100/day, capped at 20 days
+        const reward = base + streakBonus;
+        addWallet(message.author.id, reward);
+        saveEconomy();
+
+        const embed = new EmbedBuilder()
+            .setColor(0xF1C40F)
+            .setTitle('📅 Daily Reward Claimed!')
+            .setDescription(`You collected **${reward.toLocaleString()} eazycoins**!${streakBonus > 0 ? `\n🔥 Streak bonus: +${streakBonus.toLocaleString()} (Day ${streak})` : ''}`)
+            .setFooter({ text: 'Eazy Economy • Daily' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !lottery / !lottery <tickets>
+    if (command === 'lottery') {
+        const TICKET_PRICE = 500;
+        const countArg = args[0];
+
+        if (!countArg) {
+            const totalTickets = Object.values(economyData.lottery.tickets).reduce((s, c) => s + c, 0);
+            const yourTickets = economyData.lottery.tickets[message.author.id] || 0;
+            const remaining = LOTTERY_DRAW_INTERVAL - (Date.now() - economyData.lottery.lastDrawAt);
+            const minutesLeft = Math.max(0, Math.ceil(remaining / 60000));
+
+            const embed = new EmbedBuilder()
+                .setColor(0xF1C40F)
+                .setTitle('🎟️ EazyCoins Lottery')
+                .setDescription(`Buy tickets with \`!lottery <amount>\` — each ticket costs **${TICKET_PRICE.toLocaleString()} eazycoins**.`)
+                .addFields(
+                    { name: 'Current Pot', value: `${economyData.lottery.pot.toLocaleString()} eazycoins`, inline: true },
+                    { name: 'Total Tickets', value: `${totalTickets.toLocaleString()}`, inline: true },
+                    { name: 'Your Tickets', value: `${yourTickets.toLocaleString()}`, inline: true },
+                    { name: 'Next Draw', value: `~${minutesLeft} minute(s)`, inline: true }
+                );
+            if (economyData.lottery.lastWinner) {
+                embed.addFields({ name: 'Last Winner', value: `<@${economyData.lottery.lastWinner}> won ${economyData.lottery.lastWinAmount.toLocaleString()} eazycoins`, inline: false });
+            }
+            embed.setFooter({ text: 'Eazy Casino • Lottery' });
+            return message.reply({ embeds: [embed] });
+        }
+
+        const ticketCount = parseInt(countArg.replace(/,/g, ''), 10);
+        if (!ticketCount || ticketCount <= 0) return sendError(message, "Usage: `!lottery <number of tickets>` — e.g. `!lottery 5`");
+
+        const cost = ticketCount * TICKET_PRICE;
+        const wallet = getWallet(message.author.id);
+        if (cost > wallet) return sendError(message, `${ticketCount} ticket(s) costs **${cost.toLocaleString()} EazyCoins** — you only have **${wallet.toLocaleString()}**.`);
+
+        addWallet(message.author.id, -cost);
+        economyData.lottery.pot += cost;
+        economyData.lottery.tickets[message.author.id] = (economyData.lottery.tickets[message.author.id] || 0) + ticketCount;
+        economyData.lottery.lastChannelId = message.channel.id;
+        saveEconomy();
+
+        const embed = new EmbedBuilder()
+            .setColor(0xF1C40F)
+            .setTitle('🎟️ Lottery Tickets Purchased!')
+            .setDescription(`You bought **${ticketCount.toLocaleString()} ticket(s)** for **${cost.toLocaleString()} eazycoins**.`)
+            .addFields(
+                { name: 'Your Total Tickets', value: `${economyData.lottery.tickets[message.author.id].toLocaleString()}`, inline: true },
+                { name: 'Current Pot', value: `${economyData.lottery.pot.toLocaleString()} eazycoins`, inline: true }
+            )
+            .setFooter({ text: 'Eazy Casino • Lottery' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !jackpot <amount>
+    if (command === 'jackpot') {
+        const wallet = getWallet(message.author.id);
+        const bet = parseBetAmount(args[0], wallet);
+        if (bet === null) return sendError(message, "Usage: `!jackpot <amount>` (or `!jackpot all`)");
+        if (bet <= 0) return sendError(message, "Bet must be greater than 0.");
+        if (bet > wallet) return sendError(message, "You don't have that many EazyCoins.");
+
+        addWallet(message.author.id, -bet);
+        economyData.jackpotPot = (economyData.jackpotPot || 0) + bet;
+
+        const winChance = bet / economyData.jackpotPot;
+        const won = Math.random() < winChance;
+
+        let embed;
+        if (won) {
+            const winnings = economyData.jackpotPot;
+            addWallet(message.author.id, winnings);
+            economyData.jackpotPot = 0;
+            embed = new EmbedBuilder()
+                .setColor(0xF1C40F)
+                .setTitle('💰 JACKPOT WON!')
+                .setDescription(`You threw in **${bet.toLocaleString()} eazycoins** and won the entire pot of **${winnings.toLocaleString()} eazycoins**!`)
+                .setFooter({ text: 'Eazy Casino • Jackpot' });
+        } else {
+            embed = new EmbedBuilder()
+                .setColor(0xE74C3C)
+                .setTitle('💰 Jackpot')
+                .setDescription(`You threw in **${bet.toLocaleString()} eazycoins**. No luck this time — the pot rolls over!\n\n**Current Pot:** ${economyData.jackpotPot.toLocaleString()} eazycoins\n**Your Odds:** ${(winChance * 100).toFixed(2)}%`)
+                .setFooter({ text: 'Eazy Casino • Jackpot' });
+        }
+        saveEconomy();
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !slots <amount>
+    if (command === 'slots') {
+        const wallet = getWallet(message.author.id);
+        const bet = parseBetAmount(args[0], wallet);
+        if (bet === null) return sendError(message, "Usage: `!slots <amount>` (or `!slots all`)");
+        if (bet <= 0) return sendError(message, "Bet must be greater than 0.");
+        if (bet > wallet) return sendError(message, "You don't have that many EazyCoins.");
+
+        const SLOT_SYMBOLS = ['🍒', '🍋', '🍇', '🔔', '💎', '7️⃣'];
+        const reel = () => SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
+        const spin = [reel(), reel(), reel()];
+
+        let multiplier = 0;
+        if (spin[0] === spin[1] && spin[1] === spin[2]) {
+            multiplier = spin[0] === '7️⃣' ? 10 : spin[0] === '💎' ? 6 : 4;
+        } else if (spin[0] === spin[1] || spin[1] === spin[2] || spin[0] === spin[2]) {
+            multiplier = 1.5;
+        }
+
+        const winnings = Math.floor(bet * multiplier);
+        const netChange = multiplier > 0 ? winnings - bet : -bet;
+        addWallet(message.author.id, netChange);
+        const newBalance = getWallet(message.author.id);
+        saveEconomy();
+
+        const embed = new EmbedBuilder()
+            .setColor(multiplier > 0 ? 0x2ECC71 : 0xE74C3C)
+            .setTitle('🎰 Slots')
+            .setDescription(`**[ ${spin.join(' | ')} ]**\n\n${multiplier > 0 ? `🎉 You won **${winnings.toLocaleString()} eazycoins**! (${multiplier}x)` : `❌ No match. You lost **${bet.toLocaleString()} eazycoins**.`}\n\n**New Balance:** ${newBalance.toLocaleString()} eazycoins`)
+            .setFooter({ text: 'Eazy Casino • Slots' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !coinflip <amount> <heads/tails>
+    if (command === 'coinflip') {
+        const wallet = getWallet(message.author.id);
+        const choiceRaw = args[1]?.toLowerCase();
+        if (!choiceRaw || !['heads', 'tails', 'h', 't'].includes(choiceRaw)) return sendError(message, "Usage: `!coinflip <amount> <heads/tails>`");
+
+        const bet = parseBetAmount(args[0], wallet);
+        if (bet === null) return sendError(message, "Usage: `!coinflip <amount> <heads/tails>` (or `!coinflip all heads`)");
+        if (bet <= 0) return sendError(message, "Bet must be greater than 0.");
+        if (bet > wallet) return sendError(message, "You don't have that many EazyCoins.");
+
+        const normalizedChoice = choiceRaw.startsWith('h') ? 'heads' : 'tails';
+        const result = Math.random() < 0.5 ? 'heads' : 'tails';
+        const won = normalizedChoice === result;
+
+        addWallet(message.author.id, won ? bet : -bet);
+        const newBalance = getWallet(message.author.id);
+        saveEconomy();
+
+        const embed = new EmbedBuilder()
+            .setColor(won ? 0x2ECC71 : 0xE74C3C)
+            .setTitle('🪙 Coinflip')
+            .setDescription(`The coin landed on **${result.toUpperCase()}**!\n\n${won ? `🎉 You won **${bet.toLocaleString()} eazycoins**!` : `❌ You lost **${bet.toLocaleString()} eazycoins**.`}\n\n**New Balance:** ${newBalance.toLocaleString()} eazycoins`)
+            .setFooter({ text: 'Eazy Casino • Coinflip' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !dice <amount>
+    if (command === 'dice') {
+        const wallet = getWallet(message.author.id);
+        const bet = parseBetAmount(args[0], wallet);
+        if (bet === null) return sendError(message, "Usage: `!dice <amount>` (or `!dice all`)");
+        if (bet <= 0) return sendError(message, "Bet must be greater than 0.");
+        if (bet > wallet) return sendError(message, "You don't have that many EazyCoins.");
+
+        const playerRoll = Math.floor(Math.random() * 6) + 1;
+        const houseRoll = Math.floor(Math.random() * 6) + 1;
+
+        let resultText, netChange;
+        if (playerRoll > houseRoll) {
+            netChange = bet;
+            resultText = `🎉 You won **${bet.toLocaleString()} eazycoins**!`;
+        } else if (playerRoll < houseRoll) {
+            netChange = -bet;
+            resultText = `❌ You lost **${bet.toLocaleString()} eazycoins**.`;
+        } else {
+            netChange = 0;
+            resultText = `🤝 It's a tie! Your bet was returned.`;
+        }
+        addWallet(message.author.id, netChange);
+        const newBalance = getWallet(message.author.id);
+        saveEconomy();
+
+        const embed = new EmbedBuilder()
+            .setColor(netChange > 0 ? 0x2ECC71 : netChange < 0 ? 0xE74C3C : 0x3498DB)
+            .setTitle('🎲 Dice')
+            .setDescription(`You rolled a **${playerRoll}** — the house rolled a **${houseRoll}**.\n\n${resultText}\n\n**New Balance:** ${newBalance.toLocaleString()} eazycoins`)
+            .setFooter({ text: 'Eazy Casino • Dice' });
+
+        return message.reply({ embeds: [embed] });
+    }
+
+    // !roulette <amount> <red/black/green/0-36>
+    if (command === 'roulette') {
+        const ROULETTE_RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+
+        const wallet = getWallet(message.author.id);
+        const choiceRaw = args[1]?.toLowerCase();
+        if (!choiceRaw) return sendError(message, "Usage: `!roulette <amount> <red/black/green/0-36>`");
+
+        const bet = parseBetAmount(args[0], wallet);
+        if (bet === null) return sendError(message, "Usage: `!roulette <amount> <red/black/green/0-36>`");
+        if (bet <= 0) return sendError(message, "Bet must be greater than 0.");
+        if (bet > wallet) return sendError(message, "You don't have that many EazyCoins.");
+
+        let betType, betNumber = null;
+        if (choiceRaw === 'red' || choiceRaw === 'black' || choiceRaw === 'green') {
+            betType = choiceRaw;
+        } else if (/^\d+$/.test(choiceRaw) && parseInt(choiceRaw, 10) >= 0 && parseInt(choiceRaw, 10) <= 36) {
+            betType = 'number';
+            betNumber = parseInt(choiceRaw, 10);
+        } else {
+            return sendError(message, "Bet on `red`, `black`, `green`, or a number from `0` to `36`.");
+        }
+
+        const landed = Math.floor(Math.random() * 37); // 0-36
+        const landedColor = landed === 0 ? 'green' : (ROULETTE_RED.has(landed) ? 'red' : 'black');
+
+        let netChange, won = false;
+        if (betType === 'number' && betNumber === landed) { netChange = bet * 35; won = true; }
+        else if (betType === 'green' && landedColor === 'green') { netChange = bet * 35; won = true; }
+        else if ((betType === 'red' || betType === 'black') && betType === landedColor) { netChange = bet; won = true; }
+        else { netChange = -bet; }
+
+        addWallet(message.author.id, netChange);
+        const newBalance = getWallet(message.author.id);
+        saveEconomy();
+
+        const colorEmoji = landedColor === 'red' ? '🔴' : landedColor === 'black' ? '⚫' : '🟢';
+        const embed = new EmbedBuilder()
+            .setColor(won ? 0x2ECC71 : 0xE74C3C)
+            .setTitle('🎡 Roulette')
+            .setDescription(`The ball landed on ${colorEmoji} **${landed}**!\n\n${won ? `🎉 You won **${netChange.toLocaleString()} eazycoins**!` : `❌ You lost **${bet.toLocaleString()} eazycoins**.`}\n\n**New Balance:** ${newBalance.toLocaleString()} eazycoins`)
+            .setFooter({ text: 'Eazy Casino • Roulette' });
 
         return message.reply({ embeds: [embed] });
     }
