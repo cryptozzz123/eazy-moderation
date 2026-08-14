@@ -799,6 +799,85 @@ client.on('messageCreate', async (message) => {
         return sendSuccess(message, `${labelMap[type]} alerts will now be sent to ${targetChannel}.`);
     }
 
+    // !setversionchnl #channel — one-shot report of Live/Beta/Last versions across all platforms
+    if (command === 'setversionchnl') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return sendError(message, "You need the `Manage Channels` permission to run this command.");
+        }
+
+        const targetChannel = message.mentions.channels.first();
+        if (!targetChannel || !targetChannel.isTextBased()) {
+            return sendError(message, "Please mention a valid text channel. Usage: `!setversionchnl #channel`");
+        }
+
+        const processing = await message.reply("Fetching Live, Beta, and Last Roblox version data...");
+
+        try {
+            const [liveRes, futureRes, pastRes] = await Promise.all([
+                fetch('https://weao.xyz/api/versions/current'),
+                fetch('https://weao.xyz/api/versions/future'),
+                fetch('https://weao.xyz/api/versions/past')
+            ]);
+
+            const liveData = liveRes.ok ? await liveRes.json() : {};
+            const futureData = futureRes.ok ? await futureRes.json() : {};
+            const pastData = pastRes.ok ? await pastRes.json() : {};
+
+            const liveWin = liveData.Windows || 'N/A';
+            const liveMac = liveData.Mac || 'N/A';
+            const liveAndroid = liveData.Android || 'N/A';
+            const liveIOS = liveData.iOS || 'N/A';
+            const betaWin = futureData.Windows || 'N/A';
+            const betaMac = futureData.Mac || 'N/A';
+            const lastWin = pastData.Windows || 'N/A';
+            const lastMac = pastData.Mac || 'N/A';
+
+            const versionEmbed = new EmbedBuilder()
+                .setTitle('📋 Roblox Version Report')
+                .setDescription('Current Live, Beta, and Last (downgrade) versions across Windows, macOS, Android, and iOS.')
+                .addFields(
+                    { name: '🟢 Live — Windows', value: `\`${liveWin}\`\n${liveData.WindowsDate || 'Unknown'}`, inline: true },
+                    { name: '🟢 Live — macOS', value: `\`${liveMac}\`\n${liveData.MacDate || 'Unknown'}`, inline: true },
+                    { name: '\u200b', value: '\u200b', inline: true },
+                    { name: '🟢 Live — Android', value: `\`${liveAndroid}\`\n${liveData.AndroidDate || 'Unknown'}`, inline: true },
+                    { name: '🟢 Live — iOS', value: `\`${liveIOS}\`\n${liveData.iOSDate || 'Unknown'}`, inline: true },
+                    { name: '\u200b', value: '\u200b', inline: true },
+                    { name: '🟡 Beta / Future — Windows', value: `\`${betaWin}\`\n${futureData.WindowsDate || 'Unknown'}`, inline: true },
+                    { name: '🟡 Beta / Future — macOS', value: `\`${betaMac}\`\n${futureData.MacDate || 'Unknown'}`, inline: true },
+                    { name: '\u200b', value: '\u200b', inline: true },
+                    { name: '🔴 Last Version — Windows', value: `\`${lastWin}\`\n${pastData.WindowsDate || 'Unknown'}`, inline: true },
+                    { name: '🔴 Last Version — macOS', value: `\`${lastMac}\`\n${pastData.MacDate || 'Unknown'}`, inline: true },
+                    { name: '\u200b', value: '\u200b', inline: true }
+                )
+                .setTimestamp()
+                .setFooter({ text: 'Eazy Moderation • Version Report' });
+
+            const mkLink = (binaryType, version) => version !== 'N/A'
+                ? `https://rdd.weao.xyz/?channel=LIVE&binaryType=${binaryType}&version=${encodeURIComponent(version)}&includeLauncher=true&parallelDownloads=true`
+                : 'https://rdd.weao.xyz/';
+
+            const liveRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setLabel('Live Win').setStyle(ButtonStyle.Link).setURL(mkLink('WindowsPlayer', liveWin)),
+                new ButtonBuilder().setLabel('Live Mac').setStyle(ButtonStyle.Link).setURL(mkLink('MacPlayer', liveMac)),
+                new ButtonBuilder().setLabel('Android').setStyle(ButtonStyle.Link).setURL('https://play.google.com/store/apps/details?id=com.roblox.client'),
+                new ButtonBuilder().setLabel('iOS').setStyle(ButtonStyle.Link).setURL('https://apps.apple.com/us/app/roblox/id431946152')
+            );
+
+            const otherRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setLabel('Beta Win').setStyle(ButtonStyle.Link).setURL(mkLink('WindowsPlayer', betaWin)),
+                new ButtonBuilder().setLabel('Beta Mac').setStyle(ButtonStyle.Link).setURL(mkLink('MacPlayer', betaMac)),
+                new ButtonBuilder().setLabel('Last Win').setStyle(ButtonStyle.Link).setURL(mkLink('WindowsPlayer', lastWin)),
+                new ButtonBuilder().setLabel('Last Mac').setStyle(ButtonStyle.Link).setURL(mkLink('MacPlayer', lastMac))
+            );
+
+            await targetChannel.send({ embeds: [versionEmbed], components: [liveRow, otherRow] });
+            return processing.edit({ content: `✅ Version report sent to ${targetChannel}.` });
+        } catch (err) {
+            console.error("⚠️ setversionchnl failed:", err.message);
+            return processing.edit("❌ Failed to fetch Roblox version data. Try again in a moment.");
+        }
+    }
+
     // !sendlive / !sendbeta / !sendhid Commands
     if (command === 'sendlive' || command === 'sendbeta' || command === 'sendhid') {
         if (message.author.id !== MAINTENANCE_USER_ID) {
